@@ -19,18 +19,28 @@ python3 -m http.server 8000
 
 ## Fonctionnalites
 
-- Barre laterale : liste des discussions, recherche, badges non lus, heure du dernier message
-- Zone de discussion : bulles entrantes/sortantes, coches (recu / lu), separateurs de date, bandeau de chiffrement
-- Envoi de messages (Entree ou bouton) avec icone micro/envoyer dynamique
-- Reponses automatiques simulees avec indicateur "en train d'ecrire"
-- Avatars generes (initiales colorees, aucune image externe)
-- Mise en page responsive (mobile : liste <-> discussion avec bouton retour)
+- Mode sombre (bouton lune/soleil, suit le theme du systeme, memorise)
+- Messages vocaux : enregistrement micro, onde sonore, lecture/pause, navigation dans l'audio
+- Envoi d'images : bouton, glisser-deposer ou coller, apercu avec legende, visionneuse plein ecran
+- Recherche dans la liste (noms + contenu) et recherche dans la discussion avec surlignage et precedent/suivant
+- Repondre a un message (citation), copier, supprimer
+- Selecteur d'emojis
+- Filtres Toutes / Non lues / Epinglees, epingler, vider ou supprimer une discussion, nouvelle discussion
+- Sauvegarde locale des messages texte (localStorage)
+- Reponses automatiques simulees, "en train d'ecrire", coches lu / recu
+- Logo et favicon (`assets/`), responsive mobile
+
+Les images et messages vocaux restent en memoire de la session (non sauvegardes).
+Le micro demande un contexte securise (https ou localhost).
 
 ## Structure
 
 ```
 pingchat/
 ├── index.html      # Structure de la page
+├── assets/
+│   ├── logo.svg
+│   └── favicon.svg
 ├── css/
 │   └── style.css   # Styles (palette WhatsApp, responsive)
 ├── js/

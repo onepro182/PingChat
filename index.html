@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PingChat</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+  <meta name="theme-color" content="#00a884" />
   <link rel="stylesheet" href="css/style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -17,17 +19,25 @@
 
       <!-- En-tete de la barre laterale -->
       <header class="sidebar-header">
-        <div class="avatar avatar-me" title="Mon profil">M</div>
+        <div class="brand"><img src="assets/logo.svg" alt="PingChat" class="brand-logo" /><span class="brand-name">PingChat</span></div>
         <div class="sidebar-actions">
-          <button class="icon-btn" title="Statut" aria-label="Statut">
-            <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 1.5 1.5 0 0 0-3 0 6 6 0 1 1-6-6 1.5 1.5 0 0 0 0-3zm0 5.5A3.5 3.5 0 1 0 15.5 12 3.5 3.5 0 0 0 12 8.5z"/></svg>
+          <button class="icon-btn" id="theme-btn" title="Mode sombre" aria-label="Basculer le mode sombre">
+            <svg class="icon-moon" viewBox="0 0 24 24"><path d="M12.8 2.5a9.5 9.5 0 1 0 8.7 12.9A8 8 0 0 1 12.8 2.5z"/></svg>
+            <svg class="icon-sun hidden" viewBox="0 0 24 24"><path d="M12 7a5 5 0 1 0 5 5 5 5 0 0 0-5-5zM11 1h2v3h-2zm0 19h2v3h-2zM1 11h3v2H1zm19 0h3v2h-3zM4.2 5.6l1.4-1.4 2.1 2.1-1.4 1.4zm12.1 12.1 1.4-1.4 2.1 2.1-1.4 1.4zM5.6 19.8l-1.4-1.4 2.1-2.1 1.4 1.4zM18.4 4.2l1.4 1.4-2.1 2.1-1.4-1.4z"/></svg>
           </button>
-          <button class="icon-btn" title="Nouvelle discussion" aria-label="Nouvelle discussion">
+          <button class="icon-btn" id="new-chat-btn" title="Nouvelle discussion" aria-label="Nouvelle discussion">
             <svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-8 4h2v3h3v2h-3v3h-2v-3H9V9h3z"/></svg>
           </button>
-          <button class="icon-btn" title="Menu" aria-label="Menu">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-          </button>
+          <div class="menu-wrap">
+            <button class="icon-btn" id="side-menu-btn" title="Menu" aria-label="Menu">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+            </button>
+            <div class="dropdown hidden" id="side-menu">
+              <button data-act="theme">Mode sombre <span id="theme-state">off</span></button>
+              <button data-act="read-all">Tout marquer comme lu</button>
+              <button data-act="reset" class="danger">Reinitialiser les donnees</button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -37,6 +47,12 @@
           <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
           <input type="text" id="search-input" placeholder="Rechercher ou demarrer une discussion" autocomplete="off" />
         </div>
+      </div>
+
+      <div class="filters" id="filters">
+        <button class="chip active" data-filter="all">Toutes</button>
+        <button class="chip" data-filter="unread">Non lues</button>
+        <button class="chip" data-filter="pinned">Epinglees</button>
       </div>
 
       <!-- Liste des discussions (remplie par js/app.js) -->
@@ -63,14 +79,29 @@
           <button class="icon-btn" title="Appel vocal" aria-label="Appel vocal">
             <svg viewBox="0 0 24 24"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.4 11.4 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .57 3.57 1 1 0 0 1-.25 1.02z"/></svg>
           </button>
-          <button class="icon-btn" title="Rechercher" aria-label="Rechercher dans la discussion">
+          <button class="icon-btn" id="inchat-search-btn" title="Rechercher" aria-label="Rechercher dans la discussion">
             <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
           </button>
-          <button class="icon-btn" title="Options" aria-label="Options de la discussion">
-            <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-          </button>
+          <div class="menu-wrap">
+            <button class="icon-btn" id="chat-menu-btn" title="Options" aria-label="Options de la discussion">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+            </button>
+            <div class="dropdown hidden" id="chat-menu">
+              <button data-act="pin">Epingler la discussion</button>
+              <button data-act="clear">Vider la discussion</button>
+              <button data-act="delete" class="danger">Supprimer la discussion</button>
+            </div>
+          </div>
         </div>
       </header>
+
+      <div class="inchat-search hidden" id="inchat-search">
+        <input type="text" id="inchat-input" placeholder="Rechercher dans la discussion" autocomplete="off" />
+        <span class="inchat-count" id="inchat-count"></span>
+        <button class="icon-btn" id="inchat-prev" aria-label="Precedent"><svg viewBox="0 0 24 24"><path d="M7.4 15.4 12 10.8l4.6 4.6L18 14l-6-6-6 6z"/></svg></button>
+        <button class="icon-btn" id="inchat-next" aria-label="Suivant"><svg viewBox="0 0 24 24"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg></button>
+        <button class="icon-btn" id="inchat-close" aria-label="Fermer"><svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+      </div>
 
       <!-- Messages (remplis par js/app.js) -->
       <section class="messages" id="messages" aria-live="polite"></section>
@@ -83,15 +114,30 @@
         </div>
       </div>
 
+      <div class="reply-bar hidden" id="reply-bar">
+        <div class="quote" id="reply-quote"></div>
+        <button class="icon-btn" id="reply-cancel" aria-label="Annuler la reponse"><svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+      </div>
+      <div class="emoji-panel hidden" id="emoji-panel"></div>
+
       <!-- Barre de saisie -->
-      <footer class="composer">
-        <button class="icon-btn" title="Emojis" aria-label="Emojis">
-          <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-4 8.5A1.5 1.5 0 1 1 9.5 9 1.5 1.5 0 0 1 8 10.5zm4 7c-2.33 0-4.31-1.46-5.11-3.5h10.22c-.8 2.04-2.78 3.5-5.11 3.5zm4.5-7a1.5 1.5 0 1 1 1.5-1.5 1.5 1.5 0 0 1-1.5 1.5z"/></svg>
-        </button>
-        <button class="icon-btn" title="Joindre" aria-label="Joindre un fichier">
-          <svg viewBox="0 0 24 24"><path d="M16.5 6v11.5a4.5 4.5 0 0 1-9 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 0 1-2 0V6H9v9.5a2.5 2.5 0 0 0 5 0V5a4 4 0 0 0-8 0v12.5a6 6 0 0 0 12 0V6z"/></svg>
-        </button>
-        <input type="text" id="message-input" placeholder="Ecrire un message" autocomplete="off" />
+      <footer class="composer" id="composer">
+        <div class="recording-bar hidden" id="recording-bar">
+          <button class="icon-btn" id="rec-cancel" title="Annuler" aria-label="Annuler l'enregistrement"><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg></button>
+          <span class="rec-dot"></span>
+          <span class="rec-time" id="rec-time">0:00</span>
+          <span class="rec-hint">Enregistrement en cours...</span>
+        </div>
+        <div class="composer-main">
+          <button class="icon-btn" id="emoji-btn" title="Emojis" aria-label="Emojis">
+            <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-4 8.5A1.5 1.5 0 1 1 9.5 9 1.5 1.5 0 0 1 8 10.5zm4 7c-2.33 0-4.31-1.46-5.11-3.5h10.22c-.8 2.04-2.78 3.5-5.11 3.5zm4.5-7a1.5 1.5 0 1 1 1.5-1.5 1.5 1.5 0 0 1-1.5 1.5z"/></svg>
+          </button>
+          <button class="icon-btn" id="attach-btn" title="Envoyer une image" aria-label="Envoyer une image">
+            <svg viewBox="0 0 24 24"><path d="M16.5 6v11.5a4.5 4.5 0 0 1-9 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 0 1-2 0V6H9v9.5a2.5 2.5 0 0 0 5 0V5a4 4 0 0 0-8 0v12.5a6 6 0 0 0 12 0V6z"/></svg>
+          </button>
+          <input type="file" id="file-input" accept="image/*" hidden />
+          <input type="text" id="message-input" placeholder="Ecrire un message" autocomplete="off" />
+        </div>
         <button class="icon-btn send-btn" id="send-btn" title="Envoyer" aria-label="Envoyer">
           <svg class="icon-mic" viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12z"/></svg>
           <svg class="icon-send hidden" viewBox="0 0 24 24"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
@@ -103,13 +149,7 @@
     <div class="welcome-screen" id="welcome-screen">
       <div class="welcome-content">
         <div class="welcome-logo">
-          <svg viewBox="0 0 24 24" width="120" height="120">
-            <path fill="#25D366" d="M12 2A10 10 0 0 0 3.64 18.09L2 22l4-1.6A10 10 0 1 0 12 2z"/>
-            <path fill="#fff" d="M12 5.5A6.5 6.5 0 0 0 6.6 16.2l.3.47-1 2.63 2.7-.95.46.27A6.5 6.5 0 1 0 12 5.5z"/>
-            <circle fill="#fff" cx="9.2" cy="11.8" r="1.2"/>
-            <circle fill="#fff" cx="12.4" cy="11.8" r="1.2"/>
-            <circle fill="#fff" cx="15.6" cy="11.8" r="1.2"/>
-          </svg>
+          <img src="assets/logo.svg" alt="Logo PingChat" width="120" height="120" />
         </div>
         <h1>PingChat</h1>
         <p>Envoyez et recevez des messages sans garder votre telephone connecte.</p>
@@ -117,6 +157,17 @@
       </div>
     </div>
   </div>
+
+  <!-- Apercu image avant envoi / visionneuse -->
+  <div class="overlay hidden" id="img-overlay">
+    <button class="icon-btn overlay-close" id="overlay-close" aria-label="Fermer"><svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+    <img id="overlay-img" alt="Apercu" />
+    <div class="overlay-row" id="overlay-row">
+      <input type="text" id="overlay-caption" placeholder="Ajouter une legende" autocomplete="off" />
+      <button class="btn" id="overlay-send">Envoyer</button>
+    </div>
+  </div>
+  <div class="toast hidden" id="toast"></div>
 
   <script src="js/data.js"></script>
   <script src="js/app.js"></script>
