@@ -34,7 +34,10 @@
             </button>
             <div class="dropdown hidden" id="side-menu">
               <button data-act="theme">Mode sombre <span id="theme-state">off</span></button>
+              <button data-act="sound">Sons <span id="sound-state">on</span></button>
+              <button data-act="notif">Notifications <span id="notif-state">off</span></button>
               <button data-act="read-all">Tout marquer comme lu</button>
+              <button data-act="delete-all" class="danger">Supprimer toutes les discussions</button>
               <button data-act="reset" class="danger">Reinitialiser les donnees</button>
             </div>
           </div>
@@ -48,6 +51,8 @@
           <input type="text" id="search-input" placeholder="Rechercher ou demarrer une discussion" autocomplete="off" />
         </div>
       </div>
+
+      <div class="stories-bar" id="stories-bar" aria-label="Statuts"></div>
 
       <div class="filters" id="filters">
         <button class="chip active" data-filter="all">Toutes</button>
@@ -166,6 +171,29 @@
       <input type="text" id="overlay-caption" placeholder="Ajouter une legende" autocomplete="off" />
       <button class="btn" id="overlay-send">Envoyer</button>
     </div>
+  </div>
+  <!-- Statuts : visionneuse et creation -->
+  <div class="overlay story-view hidden" id="story-viewer">
+    <div class="story-progress" id="story-progress"></div>
+    <div class="story-head"><span class="story-who" id="story-who"></span><span class="story-when" id="story-when"></span>
+      <button class="icon-btn" id="story-del" aria-label="Supprimer le statut"><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg></button>
+      <button class="icon-btn" id="story-close" aria-label="Fermer"><svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+    </div>
+    <div class="story-body" id="story-body"></div>
+    <button class="story-nav prev" id="story-prev" aria-label="Precedent"></button>
+    <button class="story-nav next" id="story-next" aria-label="Suivant"></button>
+  </div>
+  <div class="overlay hidden" id="story-composer">
+    <button class="icon-btn overlay-close" id="sc-close" aria-label="Fermer"><svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+    <div class="sc-card" id="sc-card">
+      <textarea id="sc-text" maxlength="160" placeholder="Ecrire un statut"></textarea>
+    </div>
+    <div class="sc-colors" id="sc-colors"></div>
+    <div class="overlay-row">
+      <button class="btn secondary" id="sc-photo">Photo</button>
+      <button class="btn" id="sc-publish">Publier</button>
+    </div>
+    <input type="file" id="sc-file" accept="image/*" hidden />
   </div>
   <div class="toast hidden" id="toast"></div>
 

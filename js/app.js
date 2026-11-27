@@ -26,6 +26,9 @@
 
   const STORE_KEY = "pingchat.v2";
   const THEME_KEY = "pingchat.theme";
+  const SET_KEY = "pingchat.settings";
+  const STORY_KEY = "pingchat.stories";
+  const INSTINCT_KEY = "pingchat.instinct";
   const EMOJIS = ["😀","😂","😍","🥰","😎","🤔","😢","😡","👍","👎","🙏","👏","💪","🎉","🔥","❤️","💯","✅","🎂","⚽","☕","🍕","🚀","👀"];
 
   let activeId = null;
@@ -55,6 +58,10 @@
       const saved = JSON.parse(raw);
       CONVERSATIONS.length = 0;
       saved.forEach(function (c) { CONVERSATIONS.push(c); });
+      // Ajoute le contact par defaut Instinct une seule fois (anciennes sauvegardes)
+      if (!localStorage.getItem(INSTINCT_KEY) && !CONVERSATIONS.some(function (c) { return c.id === "a0"; })) {
+        CONVERSATIONS.unshift(JSON.parse(JSON.stringify(ORIGINAL[0])));
+      }
     } catch (e) { /* donnees invalides : on garde la demo */ }
   }
 
@@ -73,6 +80,7 @@
   }
 
   load();
+  try { localStorage.setItem(INSTINCT_KEY, "1"); } catch (e) {}
   normalize();
 
   // ---------- Utilitaires ----------
@@ -116,6 +124,47 @@
     t.classList.remove("hidden");
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { t.classList.add("hidden"); }, 2800);
+  }
+
+  // ---------- Reglages : sons et notifications ----------
+  let settings = { sound: true, notif: false };
+  try { Object.assign(settings, JSON.parse(localStorage.getItem(SET_KEY) || "{}")); } catch (e) {}
+  function saveSettings() { try { localStorage.setItem(SET_KEY, JSON.stringify(settings)); } catch (e) {} paintSettings(); }
+  function paintSettings() {
+    $("sound-state").textContent = settings.sound ? "on" : "off";
+    $("notif-state").textContent = settings.notif ? "on" : "off";
+  }
+  let actx = null;
+  function tone(freq, start, dur, vol) {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = "sine"; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, actx.currentTime + start);
+    g.gain.exponentialRampToValueAtTime(vol, actx.currentTime + start + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + start + dur);
+    o.connect(g); g.connect(actx.destination);
+    o.start(actx.currentTime + start); o.stop(actx.currentTime + start + dur + 0.05);
+  }
+  function playSound(kind) {
+    if (!settings.sound) return;
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === "suspended") actx.resume();
+      if (kind === "in") { tone(880, 0, 0.14, 0.18); tone(1175, 0.12, 0.2, 0.18); }
+      else if (kind === "send") { tone(660, 0, 0.1, 0.12); }
+      else if (kind === "react") { tone(990, 0, 0.08, 0.1); }
+    } catch (e) {}
+  }
+  function updateTitle() {
+    const n = CONVERSATIONS.reduce(function (s, c) { return s + (c.unread || 0); }, 0);
+    document.title = (n ? "(" + n + ") " : "") + "PingChat";
+  }
+  function notifyIncoming(conv, text) {
+    playSound("in");
+    if (settings.notif && document.hidden && "Notification" in window && Notification.permission === "granted") {
+      try { new Notification(conv.name, { body: text, icon: "assets/logo.svg" }); } catch (e) {}
+    } else if (activeId !== conv.id) {
+      toast("💬 " + conv.name + " : " + text);
+    }
   }
 
   // ---------- Theme sombre ----------
@@ -164,6 +213,21 @@
     const act = e.target.closest("button") && e.target.closest("button").dataset.act;
     closeMenus();
     if (act === "theme") toggleTheme();
+    if (act === "sound") { settings.sound = !settings.sound; saveSettings(); if (settings.sound) playSound("react"); toast(settings.sound ? "Sons actives" : "Sons coupes"); }
+    if (act === "notif") {
+      if (settings.notif) { settings.notif = false; saveSettings(); return toast("Notifications desactivees"); }
+      if (!("Notification" in window)) return toast("Notifications non supportees");
+      Notification.requestPermission().then(function (p) {
+        settings.notif = p === "granted"; saveSettings();
+        toast(settings.notif ? "Notifications activees" : "Notifications refusees par le navigateur");
+      });
+    }
+    if (act === "delete-all") {
+      if (!CONVERSATIONS.length) return toast("Aucune discussion");
+      if (!confirm("Supprimer TOUTES les discussions ?")) return;
+      CONVERSATIONS.length = 0; activeId = null; save(); closeChat(); renderChatList();
+      toast("Toutes les discussions ont ete supprimees");
+    }
     if (act === "read-all") {
       CONVERSATIONS.forEach(function (c) { c.unread = 0; });
       save(); renderChatList(); toast("Toutes les discussions sont lues");
@@ -194,6 +258,7 @@
 
   // ---------- Liste des discussions ----------
   function renderChatList() {
+    updateTitle();
     chatListEl.innerHTML = "";
     const q = searchInput.value.trim().toLowerCase();
 
@@ -208,7 +273,7 @@
     if (!list.length) {
       const e = document.createElement("li");
       e.className = "empty-state";
-      e.textContent = q ? "Aucun resultat pour \"" + searchInput.value + "\"" : "Aucune discussion ici.";
+      e.textContent = q ? "Aucun resultat pour \"" + searchInput.value + "\"" : (CONVERSATIONS.length ? "Aucune discussion ici." : "Aucune discussion. Cliquez sur + pour en creer une.");
       chatListEl.appendChild(e);
       return;
     }
@@ -234,6 +299,19 @@
         "</div>";
       li.querySelector(".chat-item-name").textContent = conv.name;
       li.querySelector(".preview-text").textContent = previewOf(last);
+      const del = document.createElement("button");
+      del.className = "item-del";
+      del.title = "Supprimer la discussion";
+      del.setAttribute("aria-label", "Supprimer la discussion " + conv.name);
+      del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg>';
+      del.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (!confirm("Supprimer la discussion avec " + conv.name + " ?")) return;
+        CONVERSATIONS.splice(CONVERSATIONS.indexOf(conv), 1);
+        if (activeId === conv.id) { activeId = null; closeChat(); }
+        save(); renderChatList(); toast("Discussion supprimee");
+      });
+      li.appendChild(del);
       li.addEventListener("click", function () { openConversation(conv.id); });
       chatListEl.appendChild(li);
     });
@@ -252,10 +330,11 @@
   $("new-chat-btn").addEventListener("click", function () {
     const name = (prompt("Nom du contact :") || "").trim();
     if (!name) return;
+    const phone = (prompt("Numero de telephone (optionnel) :") || "").trim();
     const keys = Object.keys(AVATAR_COLORS);
     const id = "c" + Date.now().toString(36);
     AVATAR_COLORS[id] = ["#7c5cd6", "#e05656", "#00a884", "#e08a2d", "#3a8dde", "#d6569a"][keys.length % 6];
-    CONVERSATIONS.unshift({ id: id, name: name, status: "en ligne", unread: 0, days: [{ date: "Aujourd'hui", messages: [] }] });
+    CONVERSATIONS.unshift({ id: id, name: name, phone: phone, status: phone || "en ligne", unread: 0, days: [{ date: "Aujourd'hui", messages: [] }] });
     save(); renderChatList(); openConversation(id);
   });
 
@@ -371,6 +450,16 @@
     meta.innerHTML = "<span>" + msg.time + "</span>" + (msg.from === "out" ? ticksSvg(msg.state) : "");
     bubble.appendChild(meta);
 
+    if (!msg.deleted && msg.reaction) {
+      const rb = document.createElement("span");
+      rb.className = "reaction-badge";
+      rb.textContent = msg.reaction;
+      rb.title = "Retirer la reaction";
+      rb.addEventListener("click", function (e) { e.stopPropagation(); msg.reaction = null; save(); renderMessages(conv); });
+      bubble.appendChild(rb);
+      bubble.classList.add("has-reaction");
+    }
+
     if (!msg.deleted) {
       const mb = document.createElement("button");
       mb.className = "msg-menu-btn";
@@ -392,7 +481,21 @@
     const m = document.createElement("div");
     m.className = "dropdown";
     const r = btn.getBoundingClientRect();
-    m.style.cssText = "position:fixed;min-width:170px;top:" + Math.min(r.bottom + 4, window.innerHeight - 160) + "px;left:" + Math.max(8, r.right - 170) + "px;";
+    m.style.cssText = "position:fixed;min-width:200px;top:" + Math.min(r.bottom + 4, window.innerHeight - 220) + "px;left:" + Math.max(8, r.right - 200) + "px;";
+    const rr = document.createElement("div");
+    rr.className = "react-row";
+    ["👍","❤️","😂","😮","😢","🙏"].forEach(function (em) {
+      const b = document.createElement("button");
+      b.textContent = em;
+      if (msg.reaction === em) b.className = "sel";
+      b.addEventListener("click", function () {
+        closeMsgMenu();
+        msg.reaction = msg.reaction === em ? null : em;
+        playSound("react"); save(); renderMessages(conv);
+      });
+      rr.appendChild(b);
+    });
+    m.appendChild(rr);
     function item(label, fn, cls) {
       const b = document.createElement("button");
       b.textContent = label;
@@ -449,7 +552,7 @@
     chatAvatarEl.textContent = initials(conv.name);
     chatAvatarEl.style.background = avatarColor(conv.id);
     chatTitleEl.textContent = conv.name;
-    chatStatusEl.textContent = conv.status;
+    chatStatusEl.textContent = conv.phone || conv.status;
     renderMessages(conv);
     save();
     renderChatList();
@@ -464,7 +567,7 @@
   backBtn.addEventListener("click", function () { chatAreaEl.classList.remove("open"); });
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
-      closeViewer(); closeMsgMenu(); closeMenus();
+      closeViewer(); closeMsgMenu(); closeMenus(); if (sv) closeStoryViewer(); closeComposer();
       if (!$("inchat-search").classList.contains("hidden")) closeInChatSearch();
     }
   });
@@ -481,6 +584,7 @@
     renderMessages(conv);
     renderChatList();
     scrollToBottom();
+    playSound("send");
     simulateReply(conv);
   }
 
@@ -500,17 +604,18 @@
     scrollToBottom();
     setTimeout(function () {
       typingEl.classList.add("hidden");
-      chatStatusEl.textContent = conv.status;
+      chatStatusEl.textContent = conv.phone || conv.status;
       // Les messages envoyes passent en "lu"
       allMessages(conv).forEach(function (m) { if (m.from === "out") m.state = "read"; });
       const reply = {
         id: "m" + Date.now().toString(36) + (uid++),
         type: "text", from: "in",
-        text: AUTO_REPLIES[Math.floor(Math.random() * AUTO_REPLIES.length)],
+        text: conv.id === "a0" ? INSTINCT_REPLY : AUTO_REPLIES[Math.floor(Math.random() * AUTO_REPLIES.length)],
         time: nowTime(),
       };
       conv.days[conv.days.length - 1].messages.push(reply);
       if (activeId !== conv.id) conv.unread += 1;
+      notifyIncoming(conv, reply.text);
       save();
       if (activeId === conv.id) { renderMessages(conv); scrollToBottom(); }
       renderChatList();
@@ -746,6 +851,166 @@
   $("inchat-next").addEventListener("click", function () { stepHit(1); });
   $("inchat-close").addEventListener("click", closeInChatSearch);
 
+  // ---------- Statuts (stories) ----------
+  const DAY = 24 * 3600 * 1000;
+  const STORY_COLORS = ["#00a884", "#7c5cd6", "#e05656", "#e08a2d", "#3a8dde", "#d6569a", "#111b21"];
+  let stories = [];
+  (function loadStories() {
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(STORY_KEY) || "null"); } catch (e) {}
+    if (raw) stories = raw;
+    else stories = DEMO_STORIES.map(function (s) { return Object.assign({}, s, { ts: Date.now() - s.ageH * 3600 * 1000 }); });
+    stories = stories.filter(function (s) { return Date.now() - s.ts < DAY; });
+  })();
+  function saveStories() {
+    try { localStorage.setItem(STORY_KEY, JSON.stringify(stories.filter(function (s) { return s.kind === "text"; }))); } catch (e) {}
+  }
+  function storiesOf(owner) { return stories.filter(function (s) { return s.owner === owner && Date.now() - s.ts < DAY; }); }
+  function ago(ts) {
+    const m = Math.round((Date.now() - ts) / 60000);
+    return m < 1 ? "a l'instant" : m < 60 ? "il y a " + m + " min" : "il y a " + Math.floor(m / 60) + " h";
+  }
+
+  function renderStories() {
+    const bar = $("stories-bar");
+    bar.innerHTML = "";
+    function bubbleFor(owner, name, color, ring, onOpen, plus) {
+      const b = document.createElement("div");
+      b.className = "story-item";
+      const av = document.createElement("div");
+      av.className = "story-avatar" + (ring === "new" ? " ring" : ring === "seen" ? " ring seen" : "");
+      const inner = document.createElement("span");
+      inner.style.background = color;
+      inner.textContent = name === "Mon statut" ? "+" : initials(name);
+      av.appendChild(inner);
+      b.appendChild(av);
+      const l = document.createElement("span");
+      l.className = "story-label";
+      l.textContent = name === "Mon statut" ? "Moi" : name.split(" ")[0];
+      b.appendChild(l);
+      b.addEventListener("click", onOpen);
+      if (plus) {
+        const p = document.createElement("button");
+        p.className = "story-plus"; p.textContent = "+"; p.setAttribute("aria-label", "Ajouter un statut");
+        p.addEventListener("click", function (e) { e.stopPropagation(); openComposer(); });
+        b.appendChild(p);
+      }
+      return b;
+    }
+    const mine = storiesOf("me");
+    bar.appendChild(bubbleFor("me", "Mon statut", "#00a884", mine.length ? "seen" : "", function () {
+      if (mine.length) openStoryViewer("me"); else openComposer();
+    }, mine.length > 0));
+    CONVERSATIONS.forEach(function (c) {
+      const list = storiesOf(c.id);
+      if (!list.length) return;
+      const unseen = list.some(function (s) { return !s.seen; });
+      bar.appendChild(bubbleFor(c.id, c.name, avatarColor(c.id), unseen ? "new" : "seen", function () { openStoryViewer(c.id); }));
+    });
+  }
+
+  let sv = null; // etat de la visionneuse
+  function openStoryViewer(owner) {
+    const list = storiesOf(owner);
+    if (!list.length) return;
+    const firstUnseen = list.findIndex(function (s) { return !s.seen; });
+    sv = { owner: owner, list: list, i: firstUnseen > 0 && owner !== "me" ? firstUnseen : 0, timer: null };
+    $("story-viewer").classList.remove("hidden");
+    showStory();
+  }
+  function showStory() {
+    clearTimeout(sv.timer);
+    const s = sv.list[sv.i];
+    s.seen = true;
+    const body = $("story-body");
+    body.innerHTML = "";
+    if (s.kind === "image") {
+      body.style.background = "#000";
+      const img = document.createElement("img"); img.src = s.src; img.alt = "Statut"; body.appendChild(img);
+    } else {
+      body.style.background = s.bg;
+      const p = document.createElement("p"); p.textContent = s.text; body.appendChild(p);
+    }
+    $("story-who").textContent = s.owner === "me" ? "Mon statut" : s.name;
+    $("story-when").textContent = ago(s.ts);
+    $("story-del").classList.toggle("hidden", s.owner !== "me");
+    const pr = $("story-progress");
+    pr.innerHTML = "";
+    sv.list.forEach(function (_, k) {
+      const seg = document.createElement("i");
+      const fill = document.createElement("b");
+      if (k < sv.i) fill.style.width = "100%";
+      if (k === sv.i) fill.className = "run";
+      seg.appendChild(fill); pr.appendChild(seg);
+    });
+    sv.timer = setTimeout(function () { stepStory(1); }, 5000);
+  }
+  function stepStory(d) {
+    if (!sv) return;
+    const n = sv.i + d;
+    if (n < 0) return showStory();
+    if (n >= sv.list.length) return closeStoryViewer();
+    sv.i = n; showStory();
+  }
+  function closeStoryViewer() {
+    if (sv) clearTimeout(sv.timer);
+    sv = null;
+    $("story-viewer").classList.add("hidden");
+    saveStories(); renderStories();
+  }
+  $("story-next").addEventListener("click", function () { stepStory(1); });
+  $("story-prev").addEventListener("click", function () { stepStory(-1); });
+  $("story-close").addEventListener("click", closeStoryViewer);
+  $("story-del").addEventListener("click", function () {
+    if (!sv || !confirm("Supprimer ce statut ?")) return;
+    const s = sv.list[sv.i];
+    stories = stories.filter(function (x) { return x !== s; });
+    sv.list.splice(sv.i, 1);
+    saveStories();
+    if (!sv.list.length) { closeStoryViewer(); toast("Statut supprime"); return; }
+    if (sv.i >= sv.list.length) sv.i = sv.list.length - 1;
+    showStory(); toast("Statut supprime");
+  });
+
+  // Creation d'un statut
+  let scColor = STORY_COLORS[0];
+  (function () {
+    const box = $("sc-colors");
+    STORY_COLORS.forEach(function (c) {
+      const b = document.createElement("button");
+      b.style.background = c; b.setAttribute("aria-label", "Couleur " + c);
+      b.addEventListener("click", function () { scColor = c; paintColors(); });
+      box.appendChild(b);
+    });
+  })();
+  function paintColors() {
+    $("sc-card").style.background = scColor;
+    Array.prototype.forEach.call($("sc-colors").children, function (b, i) { b.classList.toggle("sel", STORY_COLORS[i] === scColor); });
+  }
+  function openComposer() { $("sc-text").value = ""; paintColors(); $("story-composer").classList.remove("hidden"); $("sc-text").focus(); }
+  function closeComposer() { $("story-composer").classList.add("hidden"); }
+  $("sc-close").addEventListener("click", closeComposer);
+  $("sc-publish").addEventListener("click", function () {
+    const t = $("sc-text").value.trim();
+    if (!t) return toast("Ecrivez quelque chose");
+    stories.push({ id: "s" + Date.now().toString(36), owner: "me", name: "Moi", kind: "text", text: t, bg: scColor, ts: Date.now() });
+    saveStories(); closeComposer(); renderStories(); toast("Statut publie pour 24 h");
+  });
+  $("sc-photo").addEventListener("click", function () { $("sc-file").click(); });
+  $("sc-file").addEventListener("change", function () {
+    const f = this.files[0]; this.value = "";
+    if (!f || !f.type.startsWith("image/")) return;
+    if (f.size > 8 * 1024 * 1024) return toast("Image trop lourde (8 Mo max)");
+    const r = new FileReader();
+    r.onload = function () {
+      stories.push({ id: "s" + Date.now().toString(36), owner: "me", name: "Moi", kind: "image", src: r.result, ts: Date.now() });
+      closeComposer(); renderStories(); toast("Statut photo publie (non conserve apres rechargement)");
+    };
+    r.readAsDataURL(f);
+  });
+
   // ---------- Demarrage ----------
+  paintSettings();
+  renderStories();
   renderChatList();
 })();

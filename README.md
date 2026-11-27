@@ -33,6 +33,14 @@ python3 -m http.server 8000
 Les images et messages vocaux restent en memoire de la session (non sauvegardes).
 Le micro demande un contexte securise (https ou localhost).
 
+## Ajouts (v3)
+
+- Contact par defaut **Instinct** (+1 (650) 658-8328). Version locale : aucun vrai message n'est envoye.
+- Suppression des discussions : bouton corbeille dans la liste, menu de la discussion, ou "Supprimer toutes les discussions".
+- Reactions emoji sur les messages (menu du message, clic sur la reaction pour la retirer).
+- Statuts (24 h) : texte colore ou photo, visionneuse avec progression.
+- Sons (envoi, reception, reaction), notifications navigateur, compteur de non lus dans l'onglet.
+
 ## Structure
 
 ```

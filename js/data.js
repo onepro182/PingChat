@@ -12,9 +12,28 @@ const AVATAR_COLORS = {
   a4: "#e08a2d", // Amina
   a5: "#3a8dde", // Karim
   a6: "#d6569a", // Laila
+  a0: "#111b21", // Instinct
 };
 
+const INSTINCT_PHONE = "+1 (650) 658-8328";
+
 const CONVERSATIONS = [
+  {
+    id: "a0",
+    name: "Instinct",
+    phone: INSTINCT_PHONE,
+    status: INSTINCT_PHONE,
+    pinned: true,
+    unread: 1,
+    days: [
+      {
+        date: "Aujourd'hui",
+        messages: [
+          { from: "in", text: "Salut ! Je suis Instinct, ton contact par defaut sur PingChat. 👋", time: "09:00" },
+        ],
+      },
+    ],
+  },
   {
     id: "a1",
     name: "Sara Benali",
@@ -131,4 +150,14 @@ const AUTO_REPLIES = [
   "Je regarde ca et je te reviens.",
   "Ah bon ? Raconte.",
   "On en parle ce soir ?",
+];
+
+// Reponse d'Instinct (la version actuelle est locale, sans serveur)
+const INSTINCT_REPLY = "Cette version de PingChat est une demo locale : ton message n'est pas envoye au " + INSTINCT_PHONE + ". Il faudra un serveur pour ca.";
+
+// Statuts de demonstration (expirent apres 24 h)
+const DEMO_STORIES = [
+  { id: "s1", owner: "a1", name: "Sara Benali", kind: "text", text: "Nouvelle maquette bientot prete ✨", bg: "#7c5cd6", ageH: 2 },
+  { id: "s2", owner: "a2", name: "Mehdi El Amrani", kind: "text", text: "Match ce soir a 19h ⚽", bg: "#e05656", ageH: 5 },
+  { id: "s3", owner: "a4", name: "Amina", kind: "text", text: "Samedi dejeuner ☕", bg: "#e08a2d", ageH: 1 },
 ];
