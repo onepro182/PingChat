@@ -76,3 +76,6 @@ Rendez-vous : correction de la detection des reponses (l'horloge du telephone n'
 - Cabinet > Types de rdv : message de rappel par type de rendez-vous (choisi a l'ajout du rdv).
 - Cabinet > Import : CSV (nom, telephone, etiquette, rdv, motif). N'envoie rien. Noms locaux, etiquettes, rdv a venir. Numeros 06/07 convertis en +212. Excel : Enregistrer sous CSV.
 - Cabinet > Identite : nom, couleur principale (par compte) et logo (tableau de bord, exports). Reste local.
+
+## v1.6.4
+- Interface en arabe (partielle) : menu > "Langue / اللغة" bascule francais/arabe (RTL). `js/i18n.js` traduit par correspondance exacte les textes courts (menus, onglets Cabinet, boutons, statuts, messages courts). Les messages des discussions ne sont jamais traduits. Les longs textes d'aide du Cabinet restent en francais.

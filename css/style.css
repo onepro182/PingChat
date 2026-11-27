@@ -926,3 +926,8 @@ body.has-rail .dash-ov { left: 56px; }
 .wk-col small { color: var(--text-secondary); font-size: 11px; } .wk-n { opacity: .7; }
 #pro-tabs{flex-wrap:wrap;justify-content:center;max-width:100%;gap:6px}
 #pro-tabs .chip{padding:6px 10px;font-size:13px}
+/* arabe : mise en page de droite a gauche */
+html[dir="rtl"] .welcome-screen { left: 0; right: max(var(--sidebar-width), var(--sidebar-min)); }
+html[dir="rtl"] .sidebar { border-right: 0; border-left: 1px solid var(--border); }
+html[dir="rtl"] .dropdown { right: auto; left: 0; }
+html[dir="rtl"] input, html[dir="rtl"] textarea { text-align: start; }
