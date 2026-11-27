@@ -89,7 +89,8 @@ function createWindow() {
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false },
   });
   win.setMenuBarVisibility(false);
-  win.loadURL(URL_ROOT).catch((e) => log('loadURL', e));
+  const SPLASH = 'data:text/html;charset=utf-8,' + encodeURIComponent('<body style="margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#111b21;color:#e9edef;font-family:Segoe UI,Arial,sans-serif"><div style="font-size:34px;font-weight:700;color:#25d366">PingChat</div><p style="opacity:.8">Demarrage en cours...</p></body>');
+  win.loadURL(started ? URL_ROOT : SPLASH).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) log('loadURL', e); });
   const forceShow = () => { if (win && !win.isVisible() && !process.argv.includes('--hidden')) { log('affichage force'); win.show(); } };
   win.webContents.on('did-fail-load', (e, code, desc, url) => { log('did-fail-load', code, desc, url); forceShow(); });
   win.webContents.on('render-process-gone', (e, d) => log('render-process-gone', d));
@@ -134,14 +135,16 @@ if (app.hasSingleInstanceLock()) app.whenReady().then(async () => {
     cb(ok);
   });
   log('app prete');
+  if (!process.argv.includes('--hidden')) createWindow(); // affiche tout de suite l'ecran "Demarrage..."
   try { await startBridge(); }
   catch (e) { fatal('impossible de demarrer', e); app.exit(1); return; }
+  if (win) win.loadURL(URL_ROOT).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) log('loadURL', e); });
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'build', 'tray.png')));
   tray.setToolTip('PingChat');
   tray.on('click', showWindow); tray.on('double-click', showWindow);
   buildMenu();
   setInterval(refreshTray, 5000);
-  createWindow();
+  if (!win && !process.argv.includes('--hidden')) createWindow();
   log('fenetre creee');
 }).catch((e) => { fatal('erreur inattendue', e); app.exit(1); });
 
