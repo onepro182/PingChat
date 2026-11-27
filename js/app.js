@@ -66,6 +66,7 @@
   }
 
   function save() {
+    if (typeof wb !== "undefined" && wb.on) return; // mode WhatsApp Web : rien a sauvegarder localement
     try {
       // Les images et vocaux (blobs) restent en memoire : on ne les sauvegarde pas
       const out = CONVERSATIONS.filter(function (c) { return !c.live; }).map(function (c) {
@@ -222,6 +223,10 @@
         toast(settings.notif ? "Notifications activees" : "Notifications refusees par le navigateur");
       });
     }
+    if (act === "wb-logout") {
+      if (!confirm("Deconnecter PingChat de ton WhatsApp ?")) return;
+      wbApi("logout", {}); return;
+    }
     if (act === "delete-all") {
       if (!CONVERSATIONS.length) return toast("Aucune discussion");
       if (!confirm("Supprimer TOUTES les discussions ?")) return;
@@ -270,7 +275,7 @@
       if (!q) return true;
       return c.name.toLowerCase().includes(q) ||
         allMessages(c).some(function (m) { return m.type === "text" && !m.deleted && m.text.toLowerCase().includes(q); });
-    }).sort(function (a, b) { return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0); });
+    }).sort(function (a, b) { return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.ts || 0) - (a.ts || 0); });
 
     if (!list.length) {
       const e = document.createElement("li");
@@ -295,12 +300,12 @@
         '<div class="avatar" style="background:' + avatarColor(conv.id) + '">' + initials(conv.name) + "</div>" +
         '<div class="chat-item-body">' +
           '<div class="chat-item-top"><span class="chat-item-name"></span>' +
-          '<span class="chat-item-time' + (conv.unread ? " unread" : "") + '">' + (last ? last.time : "") + "</span></div>" +
+          '<span class="chat-item-time' + (conv.unread ? " unread" : "") + '">' + (last ? last.time : (conv.timeLabel || "")) + "</span></div>" +
           '<div class="chat-item-bottom"><span class="chat-item-preview">' + previewTicks +
           '<span class="preview-text"></span></span><span style="display:flex;gap:6px;align-items:center">' + pin + badge + "</span></div>" +
         "</div>";
       li.querySelector(".chat-item-name").textContent = conv.name;
-      li.querySelector(".preview-text").textContent = previewOf(last);
+      li.querySelector(".preview-text").textContent = last ? previewOf(last) : (conv.preview || "");
       const del = document.createElement("button");
       del.className = "item-del";
       del.title = "Supprimer la discussion";
@@ -333,7 +338,14 @@
   $("new-chat-btn").addEventListener("click", function () {
     const name = (prompt("Nom du contact :") || "").trim();
     if (!name) return;
-    const phone = (prompt(live.on ? "Numero WhatsApp (ex: +212600000000) :" : "Numero de telephone (optionnel) :") || "").trim();
+    const phone = (prompt(wb.on || live.on ? "Numero WhatsApp (ex: +212600000000) :" : "Numero de telephone (optionnel) :") || "").trim();
+    if (wb.on) {
+      const p = normPhone(phone);
+      if (!p) return toast("Numero WhatsApp invalide");
+      let ex = getConv("x" + p + "@s.whatsapp.net");
+      if (!ex) { ex = wbMakeConv({ jid: p + "@s.whatsapp.net", name: name, phone: "+" + p, group: false, unread: 0, ts: Math.floor(Date.now() / 1000), last: "" }); CONVERSATIONS.unshift(ex); }
+      renderChatList(); return openConversation(ex.id);
+    }
     if (live.on) {
       const p = normPhone(phone);
       if (!p) return toast("Numero WhatsApp invalide");
@@ -567,6 +579,7 @@
     chatTitleEl.textContent = conv.name;
     chatStatusEl.textContent = conv.phone || conv.status;
     renderMessages(conv);
+    if (conv.wb) wbLoad(conv);
     save();
     renderChatList();
     messageInput.focus();
@@ -587,6 +600,10 @@
 
   // ---------- Envoi ----------
   function pushMessage(conv, msg) {
+    if (conv.wb) {
+      if (msg.type !== "text") return toast("WhatsApp Web : seuls les messages texte sont geres pour l'instant");
+      return wbSend(conv, msg.text);
+    }
     if (conv.live) {
       if (msg.type !== "text") return toast("WhatsApp : seuls les messages texte sont geres pour l'instant");
       return liveSend(conv, msg.text, false);
@@ -970,6 +987,103 @@
     });
   }
 
+  // ---------- Mode WhatsApp Web (pont Node non officiel, bridge/) ----------
+  const wb = { on: false, es: null, status: "starting" };
+  function wbApi(path, body) {
+    const opt = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-PingChat": "1" }, body: JSON.stringify(body) } : {};
+    return fetch("api/" + path, opt).then(function (r) { return r.json(); }).catch(function () { return { ok: false, error: "Pont injoignable (la fenetre noire est-elle ouverte ?)" }; });
+  }
+  function wbColor(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return "hsl(" + h + ",45%,45%)"; }
+  function wbMakeConv(c) {
+    const id = "x" + c.jid;
+    AVATAR_COLORS[id] = wbColor(c.jid);
+    return { id: id, wb: true, live: true, jid: c.jid, name: c.name || c.phone || c.jid.split("@")[0], phone: c.phone || "", status: c.group ? "groupe" : (c.phone || ""),
+      unread: c.unread || 0, ts: c.ts || 0, preview: c.last || "", timeLabel: c.ts ? hhmm(c.ts) : "", loaded: false, days: [{ date: "Aujourd'hui", messages: [] }] };
+  }
+  function wbRefreshChats() {
+    return wbApi("chats").then(function (r) {
+      if (!r || !r.ok) return;
+      r.chats.forEach(function (c) {
+        const ex = getConv("x" + c.jid);
+        if (!ex) { CONVERSATIONS.push(wbMakeConv(c)); return; }
+        ex.name = c.name || ex.name; ex.unread = activeId === ex.id ? 0 : c.unread; ex.ts = c.ts; ex.preview = c.last; ex.timeLabel = c.ts ? hhmm(c.ts) : "";
+      });
+      renderChatList();
+    });
+  }
+  function wbToMsg(m) {
+    return { id: "w" + m.id, type: "text", from: m.fromMe ? "out" : "in", text: m.text, time: hhmm(m.ts), ts: m.ts, state: mapState(m.status), sender: m.sender };
+  }
+  function wbAppend(conv, m) {
+    if (findMsg(conv, "w" + m.id)) return false;
+    const lab = dayLabel(m.ts);
+    let day = conv.days[conv.days.length - 1];
+    if (!day || (day.date !== lab && conv.days.length)) { day = conv.days.find(function (d) { return d.date === lab; }); }
+    if (!day) { day = { date: lab, messages: [] }; conv.days.push(day); }
+    day.messages.push(wbToMsg(m));
+    return true;
+  }
+  function wbLoad(conv) {
+    wbApi("messages?jid=" + encodeURIComponent(conv.jid)).then(function (r) {
+      if (!r || !r.ok) return;
+      conv.days = []; conv.loaded = true;
+      r.messages.forEach(function (m) { wbAppend(conv, m); });
+      if (!conv.days.length) conv.days = [{ date: "Aujourd'hui", messages: [] }];
+      if (activeId === conv.id) renderMessages(conv);
+      renderChatList();
+    });
+  }
+  function wbSend(conv, text) {
+    wbApi("send", { jid: conv.jid, text: text }).then(function (r) {
+      if (r && r.ok) { playSound("send"); return; }
+      toast("WhatsApp : " + ((r && r.error) || "echec"));
+    });
+  }
+  function wbShowState(s) {
+    wb.status = s.status;
+    const ov = $("wb-overlay");
+    const open = s.status === "open";
+    ov.classList.toggle("hidden", open);
+    $("wb-logout-btn").classList.toggle("hidden", !open);
+    const img = $("wb-qr");
+    if (s.qr) { img.src = s.qr; img.classList.remove("hidden"); $("wb-msg").textContent = "Scanne ce code avec WhatsApp"; }
+    else {
+      img.classList.add("hidden");
+      $("wb-msg").textContent = s.status === "reconnecting" ? "Reconnexion..." : s.status === "logged_out" ? "Deconnecte. Nouveau code en preparation..." : "Preparation du code QR...";
+    }
+    if (open) { wbRefreshChats(); toast("Connecte a ton WhatsApp ✔"); }
+  }
+  function startWb() {
+    return fetch("api/state").then(function (r) { return r.json(); }).then(function (s) {
+      if (!s || s.bridge !== "baileys") return false;
+      wb.on = true;
+      // on remplace les discussions de demo par les vraies
+      CONVERSATIONS.length = 0; activeId = null; closeChat();
+      stories = stories.filter(function (x) { return x.owner === "me"; }); renderStories();
+      renderChatList(); wbShowState(s);
+      const es = new EventSource("api/events"); wb.es = es;
+      es.addEventListener("state", function (e) { wbShowState(JSON.parse(e.data)); });
+      es.addEventListener("chats", function () { if (wb.status === "open") wbRefreshChats(); });
+      es.addEventListener("chat", function (e) {
+        const c = JSON.parse(e.data); let ex = getConv("x" + c.jid);
+        if (!ex) { ex = wbMakeConv(c); CONVERSATIONS.push(ex); }
+        ex.name = c.name || ex.name; ex.ts = c.ts; ex.preview = c.last; ex.timeLabel = c.ts ? hhmm(c.ts) : "";
+        ex.unread = activeId === ex.id ? 0 : c.unread; renderChatList();
+      });
+      es.addEventListener("message", function (e) {
+        const d = JSON.parse(e.data); const ex = getConv("x" + d.jid); if (!ex) return;
+        if (ex.loaded && wbAppend(ex, d.msg) && activeId === ex.id) { renderMessages(ex); scrollToBottom(); }
+        if (!d.msg.fromMe) notifyIncoming(ex, d.msg.text);
+      });
+      es.addEventListener("status", function (e) {
+        const d = JSON.parse(e.data); const ex = getConv("x" + d.jid); if (!ex) return;
+        const m = findMsg(ex, "w" + d.id);
+        if (m) { m.state = mapState(d.status); if (activeId === ex.id) renderMessages(ex); }
+      });
+      return true;
+    }).catch(function () { return false; });
+  }
+
   // ---------- Statuts (stories) ----------
   const DAY = 24 * 3600 * 1000;
   const STORY_COLORS = ["#00a884", "#7c5cd6", "#e05656", "#e08a2d", "#3a8dde", "#d6569a", "#111b21"];
@@ -1131,6 +1245,6 @@
   // ---------- Demarrage ----------
   paintSettings();
   renderStories();
-  startLive();
+  startWb().then(function (ok) { if (!ok) startLive(); });
   renderChatList();
 })();

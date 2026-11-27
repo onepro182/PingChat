@@ -45,6 +45,10 @@ Le micro demande un contexte securise (https ou localhost).
 
 Voir [docs/SETUP-WHATSAPP.md](docs/SETUP-WHATSAPP.md). Le dossier `server/` contient le backend PHP. `server/config.php` (secrets) est ignore par git.
 
+## Mode WhatsApp Web (non officiel, scan QR)
+
+Voir [docs/SETUP-WHATSAPP-WEB.md](docs/SETUP-WHATSAPP-WEB.md). Pont Node local dans `bridge/` (Baileys). Session dans `bridge/data/` (ignoree par git).
+
 ## Structure
 
 ```

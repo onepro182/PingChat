@@ -759,3 +759,13 @@ mark.hl.current { background: #ff9f1c; }
 .dropdown[style*="fixed"] { width: max-content; max-width: 260px; right: auto; }
 
 .msg-meta .failed { color: #ea4b4b; font-size: 11px; }
+
+/* ---------- Connexion WhatsApp Web ---------- */
+.wb-card { background: var(--bg-panel); color: var(--text-primary); border-radius: 16px; padding: 24px 28px; width: min(420px, 92%); text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.wb-card h2 { font-size: 22px; }
+.wb-qrbox { width: 264px; height: 264px; background: #fff; border-radius: 10px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); }
+.wb-qrbox img { width: 252px; height: 252px; max-width: none; max-height: none; border-radius: 0; image-rendering: pixelated; }
+.wb-msg { font-weight: 600; color: var(--green); }
+.wb-card ol { text-align: left; font-size: 14px; color: var(--text-secondary); padding-left: 20px; line-height: 1.6; }
+.wb-warn { font-size: 12.5px; color: #c0392b; }
+#wb-logout-btn.hidden { display: none; }
