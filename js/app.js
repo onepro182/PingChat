@@ -236,6 +236,13 @@
       if (!confirm("Deconnecter ce compte WhatsApp ? Un nouveau QR sera demande.")) return;
       wbApi("logout", {}); return;
     }
+    if (act === "rr" || act === "typing") {
+      if (!wb.on) return toast("Disponible avec WhatsApp Web");
+      const body = {}; if (act === "rr") body.readReceipts = !wb.settings.readReceipts; else body.typing = !wb.settings.typing;
+      wbApi("settings", body).then(function (r) { if (r && r.ok) { wb.settings = { readReceipts: r.readReceipts, typing: r.typing }; wbPaintSettings(); toast(act === "rr" ? (r.readReceipts ? "Accuses de lecture actives" : "Accuses de lecture desactives (tu ne verras plus ceux des autres non plus)") : (r.typing ? "Indicateur d'ecriture active" : "Indicateur d'ecriture desactive")); } });
+      return;
+    }
+    if (act === "starred") { if (!wb.on) return toast("Disponible avec WhatsApp Web"); wbStarred(); return; }
     if (act === "accounts") { if (wb.on) wbManage(); else toast("Disponible avec l'application Windows"); return; }
     if (act === "delete-all") {
       if (!CONVERSATIONS.length) return toast("Aucune discussion");
@@ -259,6 +266,7 @@
     closeMenus();
     const conv = getConv(activeId);
     if (!conv) return;
+    if (act === "info") { if (conv.wb) wbInfo(conv); else toast("Infos disponibles avec WhatsApp Web"); return; }
     if (act === "pin") { conv.pinned = !conv.pinned; save(); renderChatList(); toast(conv.pinned ? "Discussion epinglee" : "Discussion desepinglee"); }
     if (act === "clear") {
       if (!confirm("Vider cette discussion ?")) return;
@@ -283,6 +291,7 @@
       if (listFilter === "unread" && !c.unread) return false;
       if (listFilter === "pinned" && !c.pinned) return false;
       if (!q) return true;
+      if (typeof wb !== "undefined" && wb.on && c.jid && wb.hits[c.jid]) return true;
       return c.name.toLowerCase().includes(q) ||
         allMessages(c).some(function (m) { return m.type === "text" && !m.deleted && m.text.toLowerCase().includes(q); });
     }).sort(function (a, b) { return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.ts || 0) - (a.ts || 0); });
@@ -316,6 +325,8 @@
         "</div>";
       li.querySelector(".chat-item-name").textContent = conv.name;
       li.querySelector(".preview-text").textContent = last ? previewOf(last) : (conv.preview || "");
+      if (q && typeof wb !== "undefined" && wb.on && conv.jid && wb.hits[conv.jid]) li.querySelector(".preview-text").textContent = "🔎 " + wb.hits[conv.jid].text;
+      paintAvatar(li.querySelector(".avatar"), conv);
       const del = document.createElement("button");
       del.className = "item-del";
       del.title = "Supprimer la discussion";
@@ -330,7 +341,10 @@
         save(); renderChatList(); toast("Discussion supprimee");
       });
       li.appendChild(del);
-      li.addEventListener("click", function () { openConversation(conv.id); });
+      li.addEventListener("click", function () {
+        if (q && typeof wb !== "undefined" && wb.on && conv.jid && wb.hits[conv.jid]) wb.jump = wb.hits[conv.jid].id;
+        openConversation(conv.id);
+      });
       chatListEl.appendChild(li);
     });
   }
@@ -342,7 +356,22 @@
     document.querySelectorAll("#filters .chip").forEach(function (c) { c.classList.toggle("active", c === b); });
     renderChatList();
   });
-  searchInput.addEventListener("input", renderChatList);
+  let searchTimer = null;
+  searchInput.addEventListener("input", function () {
+    renderChatList();
+    clearTimeout(searchTimer);
+    if (typeof wb === "undefined" || !wb.on) return;
+    const q = searchInput.value.trim();
+    if (q.length < 2) { if (Object.keys(wb.hits).length) { wb.hits = {}; renderChatList(); } return; }
+    searchTimer = setTimeout(function () {
+      wbApi("search?q=" + encodeURIComponent(q)).then(function (r) {
+        if (!r || !r.ok || searchInput.value.trim() !== q) return;
+        wb.hits = {};
+        r.items.forEach(function (it) { if (!wb.hits[it.jid]) wb.hits[it.jid] = it; });
+        renderChatList();
+      });
+    }, 250);
+  });
 
   // ---------- Petite boite de saisie (window.prompt n'existe pas dans l'application Windows) ----------
   function askText(title, placeholder, value) {
@@ -454,7 +483,7 @@
     } else {
       if (msg.sender) {
         const sender = document.createElement("div");
-        sender.style.cssText = "font-size:12.5px;font-weight:600;color:#e05656;margin-bottom:2px;";
+        sender.style.cssText = "font-size:12.5px;font-weight:600;margin-bottom:2px;color:" + (msg.sj ? "hsl(" + wbHue(msg.sj) + ",65%,62%)" : "#e05656") + ";";
         sender.textContent = msg.sender;
         bubble.appendChild(sender);
       }
@@ -527,7 +556,7 @@
 
     const meta = document.createElement("span");
     meta.className = "msg-meta";
-    meta.innerHTML = "<span>" + msg.time + "</span>" + (msg.from === "out" ? (msg.state === "failed" ? '<span class="failed" title="' + (msg.error || "Echec").replace(/"/g, "") + '">⚠ non envoye</span>' : ticksSvg(msg.state)) : "");
+    meta.innerHTML = "<span>" + (msg.star ? "★ " : "") + (msg.edited ? "modifie · " : "") + msg.time + "</span>" + (msg.from === "out" ? (msg.state === "failed" ? '<span class="failed" title="' + (msg.error || "Echec").replace(/"/g, "") + '">⚠ non envoye</span>' : ticksSvg(msg.state)) : "");
     bubble.appendChild(meta);
 
     const allR = (msg.others || []).concat(msg.reaction ? [msg.reaction] : []);
@@ -592,9 +621,30 @@
       m.appendChild(b);
     }
     item("Repondre", function () { setReply(msg, conv); });
+    if (conv.wb) {
+      item("Transferer", function () { wbForwardPick(conv, msg); });
+      item(msg.star ? "Retirer des favoris" : "Ajouter aux favoris", function () { msg.star = !msg.star; renderMessages(conv); wbApi("star", { jid: conv.jid, id: wbRid(msg), on: !!msg.star }); });
+      if (msg.from === "out" && msg.type === "text" && Date.now() / 1000 - msg.ts < 900) item("Modifier", function () {
+        askText("Modifier le message", "", msg.text).then(function (v) {
+          if (v === null || !v.trim()) return;
+          wbApi("edit", { jid: conv.jid, id: wbRid(msg), text: v }).then(function (r) { if (!r || !r.ok) toast((r && r.error) || "Modification impossible"); });
+        });
+      });
+    }
     if (msg.type === "text") item("Copier", function () {
       if (navigator.clipboard) navigator.clipboard.writeText(msg.text).then(function () { toast("Copie"); });
     });
+    if (conv.wb) {
+      item("Supprimer pour moi", function () {
+        conv.days.forEach(function (d) { d.messages = d.messages.filter(function (x) { return x.id !== msg.id; }); });
+        renderMessages(conv); renderChatList();
+        wbApi("delete-me", { jid: conv.jid, id: wbRid(msg) });
+      }, "danger");
+      if (msg.from === "out") item("Supprimer pour tous", function () {
+        if (!confirm("Supprimer ce message pour tout le monde ?")) return;
+        wbApi("delete", { jid: conv.jid, id: wbRid(msg) }).then(function (r) { if (!r || !r.ok) toast((r && r.error) || "Suppression impossible"); });
+      }, "danger");
+    }
     if (!conv.wb) item("Supprimer", function () { msg.deleted = true; if (msg.srvId) liveApi("delete.php", { id: msg.srvId }); save(); renderMessages(conv); renderChatList(); }, "danger");
     document.body.appendChild(m);
     msgMenuEl = m;
@@ -641,6 +691,8 @@
     chatAvatarEl.style.background = avatarColor(conv.id);
     chatTitleEl.textContent = conv.name;
     chatStatusEl.textContent = conv.phone || conv.status;
+    paintAvatar(chatAvatarEl, conv);
+    if (conv.wb) wbPaintStatus(conv);
     renderMessages(conv);
     if (conv.wb) wbLoad(conv);
     save();
@@ -1075,7 +1127,7 @@
   }
 
   // ---------- Mode WhatsApp Web (pont Node non officiel, bridge/) ----------
-  const wb = { on: false, es: null, status: "starting", acc: null, accounts: [] };
+  const wb = { on: false, es: null, status: "starting", acc: null, accounts: [], av: {}, avMiss: {}, hits: {}, jump: null, settings: { readReceipts: true, typing: true } };
   function wbApi(path, body) {
     const q = (path.indexOf("?") < 0 ? "?" : "&") + "acc=" + encodeURIComponent(wb.acc || "");
     const opt = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-PingChat": "1" }, body: JSON.stringify(Object.assign({ acc: wb.acc }, body)) } : {};
@@ -1120,6 +1172,10 @@
   }
   function wbToMsg(m) {
     const o = { id: "w" + m.id, type: "text", from: m.fromMe ? "out" : "in", text: m.text, time: hhmm(m.ts), ts: m.ts, state: mapState(m.status), sender: m.sender };
+    if (m.deleted) o.deleted = true;
+    if (m.edited) o.edited = true;
+    if (m.star) o.star = true;
+    if (m.sj) o.sj = m.sj;
     if (m.type === "call") o.type = "call";
     else if (m.type && m.media) {
       const f = m.media.file ? "api/media?acc=" + encodeURIComponent(wb.acc) + "&f=" + encodeURIComponent(m.media.file) : "";
@@ -1160,6 +1216,7 @@
       if (!conv.days.length) conv.days = [{ date: "Aujourd'hui", messages: [] }];
       if (activeId === conv.id) renderMessages(conv);
       renderChatList();
+      if (wb.jump) { const j = wb.jump; wb.jump = null; setTimeout(function () { jumpTo("w" + j); }, 60); }
     });
   }
   function wbSend(conv, text, quotedId) {
@@ -1265,6 +1322,81 @@
     });
   }
   function wbManage() { wbRenderManage(); $("acc-overlay").classList.remove("hidden"); }
+  function wbRid(msg) { return String(msg.id).replace(/^w/, ""); }
+  function wbHue(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360; return h; }
+  function paintAvatar(el, conv) {
+    if (!el || !conv || !conv.wb || !wb.acc || wb.avMiss[conv.jid]) return;
+    const jid = conv.jid, img = new Image();
+    img.alt = ""; img.className = "avatar-img";
+    img.onload = function () { el.textContent = ""; el.style.background = "none"; el.appendChild(img); };
+    img.onerror = function () { wb.avMiss[jid] = true; };
+    img.src = "api/avatar?acc=" + encodeURIComponent(wb.acc) + "&jid=" + encodeURIComponent(jid) + (wb.av[jid] ? "&t=" + wb.av[jid] : "");
+  }
+  function wbPaintStatus(ex) {
+    let t = ex.phone || ex.status || "";
+    if (ex.presence === "composing") t = (ex.presenceWho ? ex.presenceWho + " " : "") + "ecrit...";
+    else if (ex.presence === "recording") t = (ex.presenceWho ? ex.presenceWho + " " : "") + "enregistre un vocal...";
+    else if (ex.presence === "available") t = "en ligne";
+    if (activeId === ex.id) chatStatusEl.textContent = t;
+  }
+  function wbPaintSettings() {
+    $("rr-state").textContent = wb.settings.readReceipts ? "on" : "off";
+    $("typing-state").textContent = wb.settings.typing ? "on" : "off";
+  }
+  function openList(title, items, filterable, emptyText) {
+    const ov = $("list-overlay"), box = $("list-box"), inp = $("list-filter");
+    $("list-title").textContent = title; inp.classList.toggle("hidden", !filterable); inp.value = "";
+    function close() { ov.classList.add("hidden"); }
+    function paint() {
+      const q = inp.value.trim().toLowerCase(); box.innerHTML = "";
+      const sel = items.filter(function (i) { return !q || (i.title + " " + (i.sub || "")).toLowerCase().includes(q); });
+      if (!sel.length) { const e = document.createElement("div"); e.className = "list-empty"; e.textContent = emptyText || "Rien a afficher"; box.appendChild(e); }
+      sel.forEach(function (i) {
+        const row = document.createElement("div"); row.className = "acc-row";
+        const t = document.createElement("div"); t.className = "acc-row-t";
+        const b = document.createElement("b"); b.textContent = i.title; const sm = document.createElement("small"); sm.textContent = i.sub || "";
+        t.appendChild(b); t.appendChild(sm); row.appendChild(t);
+        if (i.badge) { const bd = document.createElement("span"); bd.className = "list-badge"; bd.textContent = i.badge; row.appendChild(bd); }
+        if (i.onClick) { row.style.cursor = "pointer"; row.onclick = function () { close(); i.onClick(); }; }
+        box.appendChild(row);
+      });
+    }
+    inp.oninput = paint; paint(); ov.classList.remove("hidden"); $("list-close").onclick = close;
+    if (filterable) setTimeout(function () { inp.focus(); }, 30);
+  }
+  function wbForwardPick(conv, msg) {
+    const items = CONVERSATIONS.filter(function (c) { return c.wb; }).map(function (c) {
+      return { title: c.name, sub: c.phone || "", onClick: function () {
+        wbApi("forward", { to: c.jid, jid: conv.jid, id: wbRid(msg) }).then(function (r) { toast(r && r.ok ? "Message transfere a " + c.name : "Transfert impossible : " + ((r && r.error) || "")); });
+      } };
+    });
+    openList("Transferer a...", items, true);
+  }
+  function wbStarred() {
+    wbApi("starred").then(function (r) {
+      if (!r || !r.ok) return toast("Echec");
+      openList("Messages favoris", r.items.map(function (it) {
+        return { title: it.name || it.jid, sub: (it.fromMe ? "Toi : " : "") + (it.text || "").slice(0, 120), badge: hhmm(it.ts), onClick: function () {
+          wb.jump = it.id;
+          if (getConv("x" + it.jid)) openConversation("x" + it.jid); else toast("Discussion introuvable");
+        } };
+      }), false, "Aucun favori. Ouvre le menu d'un message > Ajouter aux favoris.");
+    });
+  }
+  function wbInfo(conv) {
+    if (!/@g\.us$/.test(conv.jid)) {
+      return openList(conv.name, [{ title: "Numero", sub: conv.phone || conv.jid.split("@")[0] }], false);
+    }
+    wbApi("group?jid=" + encodeURIComponent(conv.jid)).then(function (r) {
+      if (!r || !r.ok) return toast("Infos du groupe indisponibles : " + ((r && r.error) || ""));
+      const g = r.group;
+      const items = [];
+      if (g.desc) items.push({ title: "Description", sub: g.desc });
+      items.push({ title: g.size + " participants", sub: g.owner ? "Cree par " + g.owner : "" });
+      g.participants.forEach(function (p) { items.push({ title: p.name || p.phone || "Contact", sub: p.name ? p.phone : "", badge: p.admin ? "admin" : "" }); });
+      openList(g.name, items, false);
+    });
+  }
   let callInfo = null;
   function wbOnCall(d) {
     const ban = $("call-banner");
@@ -1289,6 +1421,15 @@
       CONVERSATIONS.length = 0; activeId = null; closeChat();
       stories = stories.filter(function (x) { return x.owner === "me"; }); renderStories();
       renderChatList(); wbRenderRail(); wbShowState(s);
+      wbApi("settings").then(function (r) { if (r && r.ok) { wb.settings = { readReceipts: r.readReceipts, typing: r.typing }; wbPaintSettings(); } });
+      $("chat-header-info-click").onclick = function () { const c = getConv(activeId); if (c && c.wb) wbInfo(c); };
+      let typOn = false, typTimer = null;
+      messageInput.addEventListener("input", function () {
+        const c = getConv(activeId); if (!c || !c.wb || !messageInput.value) return;
+        if (!typOn) { typOn = true; wbApi("typing", { jid: c.jid, on: true }); }
+        clearTimeout(typTimer);
+        typTimer = setTimeout(function () { typOn = false; wbApi("typing", { jid: c.jid, on: false }); }, 3500);
+      });
       $("call-dismiss").onclick = function () { $("call-banner").classList.add("hidden"); };
       $("call-reject").onclick = function () {
         if (!callInfo) return;
@@ -1337,6 +1478,16 @@
         Object.assign(m, wbToMsg(d.msg)); if (activeId === ex.id) renderMessages(ex);
       });
       es.addEventListener("call", function (e) { wbOnCall(JSON.parse(e.data)); });
+      es.addEventListener("avatar", function (e) {
+        const d = JSON.parse(e.data); delete wb.avMiss[d.jid]; wb.av[d.jid] = Date.now();
+        renderChatList(); const c = getConv(activeId); if (c && c.jid === d.jid) paintAvatar(chatAvatarEl, c);
+      });
+      es.addEventListener("presence", function (e) {
+        const d = JSON.parse(e.data); const ex = getConv("x" + d.jid); if (!ex) return;
+        ex.presence = d.state; ex.presenceWho = d.who || ""; wbPaintStatus(ex);
+        clearTimeout(ex._pt);
+        if (d.state === "composing" || d.state === "recording") ex._pt = setTimeout(function () { ex.presence = ""; wbPaintStatus(ex); }, 7000);
+      });
       es.addEventListener("status", function (e) {
         const d = JSON.parse(e.data); if (!mine(d)) return; const ex = getConv("x" + d.jid); if (!ex) return;
         const m = findMsg(ex, "w" + d.id);

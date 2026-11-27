@@ -28,3 +28,6 @@ Build it yourself: `cd desktop && npm install && npm run build`.
 - Messages are marked as read on WhatsApp when you open the chat.
 - Calls: PingChat cannot place or answer calls. An incoming call shows a banner with a Refuse button, and missed calls appear in the chat.
 - Not available yet: sending voice notes (receiving works).
+
+## v1.3
+Supprimer pour tous / pour moi, modifier (15 min, ses messages), transferer, favoris, recherche dans les discussions et globale, indicateur d'ecriture, photos de profil, infos de groupe et noms des expediteurs, reglage pour desactiver les accuses de lecture (sans accuses, on ne voit plus non plus ceux des autres). Envoi de notes vocales: pas encore.

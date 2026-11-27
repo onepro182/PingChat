@@ -18,6 +18,9 @@ const ROOT = path.resolve(process.env.PINGCHAT_ROOT || path.join(HERE, '..'));  
 const DATA = path.resolve(process.env.PINGCHAT_DATA || path.join(HERE, 'data')); // session WhatsApp + sauvegarde locale
 const ACC_FILE = path.join(DATA, 'accounts.json');
 const MAX_ACCOUNTS = 10;
+const SETTINGS_FILE = path.join(DATA, 'settings.json');
+let settings = { readReceipts: true, typing: true };
+try { settings = { ...settings, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) }; } catch {}
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '127.0.0.1';
 const MAX_MSGS = 300;
@@ -197,13 +200,26 @@ function createAccount(id, dir) {
       }
       return;
     }
+    const pm = content?.protocolMessage;
+    if (pm && (pm.type === 0 || pm.type === 'REVOKE' || pm.type === 14 || pm.type === 'MESSAGE_EDIT')) {
+      const tid = pm.key?.id; const tgt = (msgs.get(jid) || []).find((x) => x.id === tid);
+      if (tgt) {
+        if (pm.type === 0 || pm.type === 'REVOKE') { tgt.deleted = true; tgt.text = ''; tgt.caption = ''; }
+        else { const nt = previewOfContent(normalizeMessageContent(pm.editedMessage)); if (nt) { tgt.text = nt; if (tgt.caption !== undefined) tgt.caption = nt; tgt.edited = true; } }
+        saveSoon(); emit('msgupdate', { jid, msg: tgt }); emit('chat', chatView(jid));
+      }
+      return;
+    }
     const text = textOf(m);
     if (text === null) return;
     const list = msgs.get(jid) || [];
     if (list.some((x) => x.id === m.key.id)) return;
     const ts = Number(m.messageTimestamp?.toNumber ? m.messageTimestamp.toNumber() : m.messageTimestamp) || Math.floor(Date.now() / 1000);
     const msg = { id: m.key.id, fromMe: !!m.key.fromMe, text, ts, status: m.key.fromMe ? (STATUS[m.status] || 'sent') : 'delivered', k: { rj: m.key.remoteJid, p: m.key.participant || '' } };
-    if (isGroup(jid) && !msg.fromMe && m.pushName) msg.sender = m.pushName;
+    if (isGroup(jid) && !msg.fromMe) {
+      const pj = canon(m.key.participant || ''); msg.sj = pj;
+      msg.sender = contacts.get(pj) || m.pushName || notifies.get(pj) || phoneOf(pj) || '';
+    }
     const md = content ? mediaOf(content) : null;
     if (md) {
       msg.type = md.type; msg.caption = md.caption;
@@ -242,11 +258,19 @@ function createAccount(id, dir) {
       saveSoon(); emit('msgupdate', { jid, msg });
     } catch (e) { console.error('ecriture media', e); }
   }
+  async function loadGroups() {
+    try {
+      const all = await sock.groupFetchAllParticipating();
+      for (const [gid, g] of Object.entries(all || {})) { const e = ensureChat(gid); if (g.subject) e.name = g.subject; groupCache.set(gid, { t: Date.now(), g }); }
+      saveSoon(); emit('chats', {});
+    } catch (e) { console.error('groupes', String(e.message || e)); }
+  }
+  const groupCache = new Map();
   function chatView(jid) {
     const c = ensureChat(jid);
-    const list = msgs.get(jid) || [];
+    const list = (msgs.get(jid) || []).filter((m) => !m.hidden);
     const last = list[list.length - 1];
-    return { jid, name: nameOf(jid), phone: phoneOf(jid), group: !!c.group, unread: c.unread || 0, ts: c.ts || last?.ts || 0, last: last ? (last.type ? ({ image: '📷 Photo', video: '🎥 Video', sticker: 'Sticker', voice: '🎤 Message vocal', audio: '🎵 Audio', document: '📄 Document' }[last.type] || last.text) + (last.caption ? ' ' + last.caption : '') : last.text) : '' };
+    return { jid, name: nameOf(jid), phone: phoneOf(jid), group: !!c.group, unread: c.unread || 0, ts: c.ts || last?.ts || 0, last: last ? (last.deleted ? '🚫 Message supprime' : last.type ? ({ image: '📷 Photo', video: '🎥 Video', sticker: 'Sticker', voice: '🎤 Message vocal', audio: '🎵 Audio', document: '📄 Document' }[last.type] || last.text) + (last.caption ? ' ' + last.caption : '') : last.text) : '' };
   }
 
   // ---------- Connexion WhatsApp ----------
@@ -277,7 +301,7 @@ function createAccount(id, dir) {
       }
       if (u.connection === 'open') {
         state.status = 'open'; state.qr = null;
-        resolveLids();
+        resolveLids(); loadGroups();
         state.me = sock.user ? { id: jidNormalizedUser(sock.user.id), name: sock.user.name || '' } : null;
         emit('state', publicState());
       }
@@ -339,9 +363,15 @@ function createAccount(id, dir) {
     sock.ev.on('messages.upsert', ({ messages, type }) => {
       for (const m of messages) addMessage(m, type === 'notify' || !!m.key.fromMe);
     });
+    sock.ev.on('presence.update', ({ id, presences }) => {
+      for (const [who, pr] of Object.entries(presences || {})) {
+        const st = pr?.lastKnownPresence;
+        emit('presence', { jid: canon(id), state: st || '', last: pr?.lastSeen || 0, who: isGroup(id) ? (nameOf(canon(who)) || phoneOf(canon(who)) || '') : '' });
+      }
+    });
     sock.ev.on('messages.update', (ups) => {
       for (const u of ups) {
-        const jid = u.key?.remoteJid; const list = msgs.get(jid); if (!list) continue;
+        const jid = canon(u.key?.remoteJid); const list = msgs.get(jid); if (!list) continue;
         const m = list.find((x) => x.id === u.key.id);
         if (m && u.update?.status !== undefined && m.fromMe) { m.status = STATUS[u.update.status] || m.status; emit('status', { jid, id: m.id, status: m.status }); saveSoon(); }
       }
@@ -390,7 +420,7 @@ function createAccount(id, dir) {
     saveSoon(); emit('reaction', { jid, id, reactions: msg.reactions });
   }
   async function markRead(jid) {
-    if (state.status !== 'open' || !sock) return;
+    if (!settings.readReceipts || state.status !== 'open' || !sock) return;
     const keys = (msgs.get(jid) || []).filter((m) => !m.fromMe && !m.read).slice(-50);
     if (!keys.length) return;
     keys.forEach((m) => { m.read = true; });
@@ -398,6 +428,99 @@ function createAccount(id, dir) {
     try { await sock.readMessages(keys.map((m) => ({ remoteJid: m.k?.rj || jid, id: m.id, fromMe: false, participant: m.k?.p || undefined }))); } catch (e) { console.error('accuse de lecture', String(e.message || e)); }
   }
   async function rejectCall(id, from) { ready(); await sock.rejectCall(String(id), String(from)); }
+  const findMsg = (jid, id) => (msgs.get(canon(jid)) || []).find((x) => x.id === id);
+  const keyOf = (jid, m) => ({ remoteJid: m.k?.rj || canon(jid), id: m.id, fromMe: m.fromMe, participant: m.k?.p || undefined });
+  async function deleteForAll(rawJid, id) {
+    const jid = canon(rawJid); ready();
+    const m = findMsg(jid, id);
+    if (!m || !m.fromMe) throw Object.assign(new Error('Seuls tes propres messages peuvent etre supprimes pour tous'), { code: 400 });
+    await sock.sendMessage(keyOf(jid, m).remoteJid, { delete: keyOf(jid, m) });
+    m.deleted = true; m.text = ''; m.caption = ''; saveSoon(); emit('msgupdate', { jid, msg: m }); emit('chat', chatView(jid));
+  }
+  function deleteForMe(rawJid, id) {
+    const jid = canon(rawJid); const m = findMsg(jid, id); if (!m) return;
+    m.hidden = true; saveSoon(); emit('chat', chatView(jid));
+  }
+  async function editMsg(rawJid, id, text) {
+    const jid = canon(rawJid); ready();
+    const m = findMsg(jid, id); text = String(text || '').trim();
+    if (!m || !m.fromMe || m.type || !text) throw Object.assign(new Error('Seuls tes messages texte peuvent etre modifies'), { code: 400 });
+    if (Date.now() / 1000 - m.ts > 15 * 60) throw Object.assign(new Error('Modification possible pendant 15 minutes seulement'), { code: 400 });
+    await sock.sendMessage(keyOf(jid, m).remoteJid, { text, edit: keyOf(jid, m) });
+    m.text = text; m.edited = true; saveSoon(); emit('msgupdate', { jid, msg: m }); emit('chat', chatView(jid));
+  }
+  async function forward(rawTo, fromJid, id) {
+    const to = canon(rawTo); ready();
+    const m = findMsg(fromJid, id); if (!m || m.deleted) throw Object.assign(new Error('message introuvable'), { code: 404 });
+    if (m.media?.file) {
+      const full = mediaFile(m.media.file); if (!full) throw Object.assign(new Error('fichier absent'), { code: 404 });
+      const buf = fs.readFileSync(full); const mime = m.media.mime || 'application/octet-stream';
+      let content;
+      if (m.type === 'image') content = { image: buf, caption: m.caption || undefined, mimetype: mime };
+      else if (m.type === 'video') content = { video: buf, caption: m.caption || undefined, mimetype: mime };
+      else if (m.type === 'voice') content = { audio: buf, ptt: true, mimetype: mime };
+      else if (m.type === 'audio') content = { audio: buf, mimetype: mime };
+      else if (m.type === 'sticker') content = { sticker: buf };
+      else content = { document: buf, mimetype: mime, fileName: m.media.name || 'fichier' };
+      const sent = await sock.sendMessage(to, content); addMessage(sent, true, { buf }); return sent.key.id;
+    }
+    if (m.type) throw Object.assign(new Error('Ce type de message ne peut pas etre transfere'), { code: 400 });
+    const sent = await sock.sendMessage(to, { text: m.text }); addMessage(sent, true); return sent.key.id;
+  }
+  function star(rawJid, id, on) {
+    const m = findMsg(rawJid, id); if (!m) return;
+    if (on) m.star = true; else delete m.star;
+    saveSoon(); emit('msgupdate', { jid: canon(rawJid), msg: m });
+  }
+  function starred() {
+    const out = [];
+    for (const [jid, list] of msgs) for (const m of list) if (m.star && !m.deleted && !m.hidden) out.push({ jid, name: nameOf(jid), id: m.id, ts: m.ts, fromMe: m.fromMe, text: m.text });
+    return out.sort((a, b) => b.ts - a.ts).slice(0, 200);
+  }
+  function search(q) {
+    q = String(q || '').toLowerCase().trim(); if (q.length < 2) return [];
+    const out = [];
+    for (const [jid, list] of msgs) for (const m of list) {
+      if (m.deleted || m.hidden) continue;
+      const hay = ((m.text || '') + ' ' + (m.caption || '') + ' ' + (m.media?.name || '')).toLowerCase();
+      if (hay.includes(q)) out.push({ jid, id: m.id, ts: m.ts, text: m.text || m.caption || m.media?.name || '' });
+    }
+    return out.sort((a, b) => b.ts - a.ts).slice(0, 80);
+  }
+  async function groupInfo(jid) {
+    ready();
+    let c = groupCache.get(jid);
+    if (!c || Date.now() - c.t > 5 * 60 * 1000) { c = { t: Date.now(), g: await sock.groupMetadata(jid) }; groupCache.set(jid, c); }
+    const g = c.g;
+    return { jid, name: g.subject || nameOf(jid), desc: g.desc || '', size: (g.participants || []).length, owner: g.owner ? phoneOf(canon(g.owner)) || '' : '',
+      participants: (g.participants || []).map((p) => { const pj = canon(p.phoneNumber || p.id); return { jid: pj, name: contacts.get(pj) || notifies.get(pj) || '', phone: phoneOf(pj) || phoneOf(canon(p.id)) || '', admin: !!p.admin }; }) };
+  }
+  async function typing(rawJid, on) {
+    if (!settings.typing || state.status !== 'open' || !sock) return;
+    try { await sock.sendPresenceUpdate(on ? 'composing' : 'paused', canon(rawJid)); } catch {}
+  }
+  // photos de profil : telechargees une fois, gardees dans le dossier du compte (file d'attente lente pour ne pas surcharger WhatsApp)
+  const AV = path.join(dir, 'avatars'); const avTry = new Map(); let avQueue = Promise.resolve();
+  const avFile = (jid) => path.join(AV, safeName(jid) + '.jpg');
+  function avatar(rawJid) {
+    const jid = canon(rawJid); const f = avFile(jid);
+    if (fs.existsSync(f)) return f;
+    const last = avTry.get(jid); if (last && Date.now() - last < 6 * 3600 * 1000) return null;
+    if (state.status !== 'open' || !sock) return null;
+    avTry.set(jid, Date.now());
+    avQueue = avQueue.then(async () => {
+      try {
+        const u = await sock.profilePictureUrl(jid, 'preview');
+        const h = new URL(u).hostname;
+        if (!/^https:/.test(u) || !/(whatsapp\.net|fbcdn\.net|whatsapp\.com)$/.test(h)) return;
+        const r = await fetch(u); if (!r.ok) return;
+        const b = Buffer.from(await r.arrayBuffer()); if (!b.length || b.length > 2e6) return;
+        fs.mkdirSync(AV, { recursive: true }); fs.writeFileSync(f, b); emit('avatar', { jid });
+      } catch {}
+      await new Promise((ok) => setTimeout(ok, 600));
+    });
+    return null;
+  }
   function mediaFile(f) {
     if (!/^[A-Za-z0-9_-]+\.[a-z0-9]{1,8}$/.test(f || '')) return null;
     const full = path.join(MEDIA, f);
@@ -413,7 +536,8 @@ function createAccount(id, dir) {
   return {
     id, publicState, unreadTotal, canon, destroy,
     chatList: () => [...chats.keys()].map(chatView).filter((c) => c.ts || c.last).sort((a, b) => b.ts - a.ts),
-    messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); return msgs.get(jid) || []; },
+    messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); if (!isGroup(jid) && sock && state.status === 'open') sock.presenceSubscribe(jid).catch(() => {}); return (msgs.get(jid) || []).filter((m) => !m.hidden); },
+    deleteForAll, deleteForMe, editMsg, forward, star, starred, search, groupInfo, typing, avatar,
     send, sendMedia, react, rejectCall, mediaFile,
     logout: async () => { try { await sock?.logout(); } catch {} },
   };
@@ -553,6 +677,35 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
       try { await a.rejectCall(b.id, b.from); return json(res, 200, { ok: true }); }
       catch (e) { return json(res, e.code || 502, { ok: false, error: String(e.message || e) }); }
+    }
+    if (p === '/api/settings') {
+      if (req.method === 'POST') {
+        const b = await readBody(req);
+        if (typeof b.readReceipts === 'boolean') settings.readReceipts = b.readReceipts;
+        if (typeof b.typing === 'boolean') settings.typing = b.typing;
+        try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings)); } catch {}
+      }
+      return json(res, 200, { ok: true, ...settings });
+    }
+    const wrapA = async (fn) => { try { return json(res, 200, { ok: true, ...(await fn()) }); } catch (e) { return json(res, e.code || 502, { ok: false, error: String(e.message || e) }); } };
+    if (req.method === 'POST' && ['/api/delete', '/api/delete-me', '/api/edit', '/api/forward', '/api/star', '/api/typing'].includes(p)) {
+      const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+      const jid = String(b.jid || ''); const id = String(b.id || '');
+      if (p === '/api/delete') return wrapA(async () => { await a.deleteForAll(jid, id); return {}; });
+      if (p === '/api/delete-me') return wrapA(async () => { a.deleteForMe(jid, id); return {}; });
+      if (p === '/api/edit') return wrapA(async () => { await a.editMsg(jid, id, b.text); return {}; });
+      if (p === '/api/forward') return wrapA(async () => { await a.forward(String(b.to || ''), jid, id); return {}; });
+      if (p === '/api/star') return wrapA(async () => { a.star(jid, id, !!b.on); return {}; });
+      if (p === '/api/typing') return wrapA(async () => { await a.typing(jid, !!b.on); return {}; });
+    }
+    if (p === '/api/starred') { const a = A(); return json(res, 200, { ok: true, items: a ? a.starred() : [] }); }
+    if (p === '/api/search') { const a = A(); return json(res, 200, { ok: true, items: a ? a.search(url.searchParams.get('q')) : [] }); }
+    if (p === '/api/group') { const a = A(); if (!a) return json(res, 404, { ok: false }); return wrapA(async () => ({ group: await a.groupInfo(url.searchParams.get('jid') || '') })); }
+    if (p === '/api/avatar') {
+      const a = A(); const f = a ? a.avatar(url.searchParams.get('jid') || '') : null;
+      if (!f) { res.writeHead(404, { 'Cache-Control': 'no-store' }); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
+      return fs.createReadStream(f).pipe(res);
     }
     if (p === '/api/media') {
       const a = A(); const f = a?.mediaFile(url.searchParams.get('f') || '');

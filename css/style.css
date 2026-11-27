@@ -851,3 +851,9 @@ html, body { background: var(--indigo-dark); }
 .msg-sticker { width: 150px; height: 150px; object-fit: contain; display: block; }
 video.msg-img { max-width: 320px; border-radius: 14px; display: block; }
 .composer { background: var(--bg-app); }
+
+.avatar-img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; max-width: none; max-height: none; }
+#list-overlay { z-index: 70; }
+.list-empty { padding: 14px; color: var(--text-secondary); text-align: center; }
+.list-badge { font-size: 11.5px; padding: 3px 8px; border-radius: 10px; background: var(--accent); color: #fff; white-space: nowrap; }
+.ask-input.hidden { display: none; }
