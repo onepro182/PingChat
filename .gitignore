@@ -2,3 +2,6 @@ node_modules/
 dist/
 .DS_Store
 *.log
+
+server/config.php
+server/data/*.sqlite

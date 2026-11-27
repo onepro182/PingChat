@@ -41,6 +41,10 @@ Le micro demande un contexte securise (https ou localhost).
 - Statuts (24 h) : texte colore ou photo, visionneuse avec progression.
 - Sons (envoi, reception, reaction), notifications navigateur, compteur de non lus dans l'onglet.
 
+## WhatsApp reel (XAMPP + API Cloud de Meta)
+
+Voir [docs/SETUP-WHATSAPP.md](docs/SETUP-WHATSAPP.md). Le dossier `server/` contient le backend PHP. `server/config.php` (secrets) est ignore par git.
+
 ## Structure
 
 ```

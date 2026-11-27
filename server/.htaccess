@@ -1,0 +1,5 @@
+# Ne jamais servir la config ni la base
+<FilesMatch "^(config\.php|config\.sample\.php|lib\.php)$">
+  Require all denied
+</FilesMatch>
+Options -Indexes

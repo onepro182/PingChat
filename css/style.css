@@ -757,3 +757,5 @@ mark.hl.current { background: #ff9f1c; }
 .btn.secondary { background: #3b4a54; }
 
 .dropdown[style*="fixed"] { width: max-content; max-width: 260px; right: auto; }
+
+.msg-meta .failed { color: #ea4b4b; font-size: 11px; }

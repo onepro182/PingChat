@@ -68,7 +68,7 @@
   function save() {
     try {
       // Les images et vocaux (blobs) restent en memoire : on ne les sauvegarde pas
-      const out = CONVERSATIONS.map(function (c) {
+      const out = CONVERSATIONS.filter(function (c) { return !c.live; }).map(function (c) {
         return Object.assign({}, c, {
           days: c.days.map(function (d) {
             return { date: d.date, messages: d.messages.filter(function (m) { return m.type === "text"; }) };
@@ -225,6 +225,7 @@
     if (act === "delete-all") {
       if (!CONVERSATIONS.length) return toast("Aucune discussion");
       if (!confirm("Supprimer TOUTES les discussions ?")) return;
+      CONVERSATIONS.forEach(function (c) { if (c.live) liveApi("delete.php", { phone: c.phone }); });
       CONVERSATIONS.length = 0; activeId = null; save(); closeChat(); renderChatList();
       toast("Toutes les discussions ont ete supprimees");
     }
@@ -251,6 +252,7 @@
     }
     if (act === "delete") {
       if (!confirm("Supprimer cette discussion ?")) return;
+      if (conv.live) liveApi("delete.php", { phone: conv.phone });
       CONVERSATIONS.splice(CONVERSATIONS.indexOf(conv), 1);
       activeId = null; save(); closeChat(); renderChatList();
     }
@@ -307,6 +309,7 @@
       del.addEventListener("click", function (e) {
         e.stopPropagation();
         if (!confirm("Supprimer la discussion avec " + conv.name + " ?")) return;
+        if (conv.live) liveApi("delete.php", { phone: conv.phone });
         CONVERSATIONS.splice(CONVERSATIONS.indexOf(conv), 1);
         if (activeId === conv.id) { activeId = null; closeChat(); }
         save(); renderChatList(); toast("Discussion supprimee");
@@ -330,7 +333,17 @@
   $("new-chat-btn").addEventListener("click", function () {
     const name = (prompt("Nom du contact :") || "").trim();
     if (!name) return;
-    const phone = (prompt("Numero de telephone (optionnel) :") || "").trim();
+    const phone = (prompt(live.on ? "Numero WhatsApp (ex: +212600000000) :" : "Numero de telephone (optionnel) :") || "").trim();
+    if (live.on) {
+      const p = normPhone(phone);
+      if (!p) return toast("Numero WhatsApp invalide");
+      const ex = getConv("w" + p);
+      if (ex) return openConversation(ex.id);
+      const nc = makeLiveConv(p, name);
+      CONVERSATIONS.unshift(nc);
+      renderChatList(); openConversation(nc.id);
+      return;
+    }
     const keys = Object.keys(AVATAR_COLORS);
     const id = "c" + Date.now().toString(36);
     AVATAR_COLORS[id] = ["#7c5cd6", "#e05656", "#00a884", "#e08a2d", "#3a8dde", "#d6569a"][keys.length % 6];
@@ -364,7 +377,7 @@
       chip.className = "date-chip";
       chip.textContent = day.date;
       messagesEl.appendChild(chip);
-      if (dayIndex === 0) {
+      if (dayIndex === 0 && !conv.live) {
         const notice = document.createElement("span");
         notice.className = "encryption-notice";
         notice.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm-3 8V6a3 3 0 0 1 6 0v3z"/></svg>Les messages sont chiffres de bout en bout (demonstration locale).';
@@ -447,7 +460,7 @@
 
     const meta = document.createElement("span");
     meta.className = "msg-meta";
-    meta.innerHTML = "<span>" + msg.time + "</span>" + (msg.from === "out" ? ticksSvg(msg.state) : "");
+    meta.innerHTML = "<span>" + msg.time + "</span>" + (msg.from === "out" ? (msg.state === "failed" ? '<span class="failed" title="' + (msg.error || "Echec").replace(/"/g, "") + '">⚠ non envoye</span>' : ticksSvg(msg.state)) : "");
     bubble.appendChild(meta);
 
     if (!msg.deleted && msg.reaction) {
@@ -507,7 +520,7 @@
     if (msg.type === "text") item("Copier", function () {
       if (navigator.clipboard) navigator.clipboard.writeText(msg.text).then(function () { toast("Copie"); });
     });
-    item("Supprimer", function () { msg.deleted = true; save(); renderMessages(conv); renderChatList(); }, "danger");
+    item("Supprimer", function () { msg.deleted = true; if (msg.srvId) liveApi("delete.php", { id: msg.srvId }); save(); renderMessages(conv); renderChatList(); }, "danger");
     document.body.appendChild(m);
     msgMenuEl = m;
   }
@@ -574,6 +587,10 @@
 
   // ---------- Envoi ----------
   function pushMessage(conv, msg) {
+    if (conv.live) {
+      if (msg.type !== "text") return toast("WhatsApp : seuls les messages texte sont geres pour l'instant");
+      return liveSend(conv, msg.text, false);
+    }
     msg.id = "m" + Date.now().toString(36) + (uid++);
     msg.from = "out";
     msg.time = nowTime();
@@ -851,6 +868,108 @@
   $("inchat-next").addEventListener("click", function () { stepHit(1); });
   $("inchat-close").addEventListener("click", closeInChatSearch);
 
+  // ---------- Mode WhatsApp reel (serveur PHP local) ----------
+  // Actif seulement si la page est servie par XAMPP (http://localhost/pingchat/)
+  // et que server/config.php est rempli. Sinon l'application reste en mode demo.
+  const live = { on: false, lastId: 0, first: true, country: "212", timer: null, busy: false };
+  function normPhone(p) {
+    const raw = String(p || "");
+    let d = raw.replace(/\D+/g, "");
+    if (!d) return "";
+    if (raw.indexOf("+") === -1) {
+      if (d.indexOf("00") === 0) d = d.slice(2);
+      else if (d.charAt(0) === "0") d = live.country + d.slice(1);
+    }
+    return d;
+  }
+  function liveApi(path, body) {
+    if (!live.on && path !== "status.php") return Promise.resolve(null);
+    const opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
+    return fetch("server/api/" + path, opt).then(function (r) { return r.json().then(function (j) { j._status = r.status; return j; }); })
+      .catch(function () { return { ok: false, error: "network", message: "Serveur local injoignable (XAMPP demarre ?)" }; });
+  }
+  function makeLiveConv(phone, name) {
+    const id = "w" + phone;
+    AVATAR_COLORS[id] = "#25d366";
+    return { id: id, live: true, name: name || ("+" + phone), phone: "+" + phone, status: "+" + phone, unread: 0, days: [{ date: "Aujourd'hui", messages: [] }] };
+  }
+  function dayLabel(ts) {
+    const d = new Date(ts * 1000), n = new Date();
+    if (d.toDateString() === n.toDateString()) return "Aujourd'hui";
+    const y = new Date(); y.setDate(n.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return "Hier";
+    return d.toLocaleDateString("fr-FR");
+  }
+  function hhmm(ts) { const d = new Date(ts * 1000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+  function mapState(s) { return s === "read" ? "read" : s === "failed" ? "failed" : "delivered"; }
+
+  function syncLive() {
+    if (!live.on || live.busy) return;
+    live.busy = true;
+    liveApi("messages.php?since=" + live.lastId).then(function (res) {
+      live.busy = false;
+      if (!res || !res.ok) return;
+      let changed = false;
+      (res.messages || []).forEach(function (m) {
+        live.lastId = Math.max(live.lastId, m.id);
+        let conv = getConv("w" + m.phone);
+        if (!conv) { conv = makeLiveConv(m.phone, (res.names || {})[m.phone]); CONVERSATIONS.unshift(conv); }
+        if (findMsg(conv, "srv" + m.id)) return;
+        let day = conv.days.find(function (d) { return d.date === dayLabel(m.ts); });
+        if (!day) { day = { date: dayLabel(m.ts), messages: [] }; conv.days.push(day); }
+        day.messages.push({ id: "srv" + m.id, srvId: m.id, type: "text", from: m.direction === "in" ? "in" : "out",
+          text: m.body, time: hhmm(m.ts), state: mapState(m.status), error: m.error || "" });
+        changed = true;
+        if (m.direction === "in" && !live.first) {
+          if (activeId !== conv.id) conv.unread = (conv.unread || 0) + 1;
+          notifyIncoming(conv, m.body);
+        } else if (m.direction === "in" && live.first && m.ts * 1000 > Date.now() - 3600000 && activeId !== conv.id) {
+          conv.unread = (conv.unread || 0) + 1;
+        }
+      });
+      // noms des contacts + statuts (envoye / lu / echec)
+      CONVERSATIONS.forEach(function (c) {
+        if (c.live && res.names && res.names[c.phone.slice(1)] && c.name === c.phone) { c.name = res.names[c.phone.slice(1)]; changed = true; }
+      });
+      (res.statuses || []).forEach(function (s) {
+        CONVERSATIONS.forEach(function (c) {
+          if (!c.live) return;
+          const m = findMsg(c, "srv" + s.id);
+          const ns = mapState(s.status);
+          if (m && (m.state !== ns || m.error !== (s.error || m.error))) { m.state = ns; if (s.error) m.error = s.error; changed = true; }
+        });
+      });
+      live.first = false;
+      if (changed) {
+        renderChatList();
+        if (activeId) { const c = getConv(activeId); if (c && c.live) { renderMessages(c); } }
+      }
+    });
+  }
+
+  function liveSend(conv, text, template) {
+    return liveApi("send.php", template ? { to: conv.phone, template: true } : { to: conv.phone, text: text }).then(function (res) {
+      if (res && res.ok) { playSound("send"); syncLive(); return; }
+      if (res && res.error === "window_closed") {
+        if (confirm("Fenetre WhatsApp de 24 h fermee pour ce contact.\nEnvoyer le modele d'ouverture (hello_world) a la place ?")) return liveSend(conv, text, true);
+        return;
+      }
+      toast("WhatsApp : " + ((res && (res.message || res.error)) || "echec"));
+    });
+  }
+
+  function startLive() {
+    liveApi("status.php").then(function (s) {
+      if (!s || !s.ok) return; // pas de serveur : mode demo
+      live.on = true; live.country = s.default_country || "212";
+      if (!s.configured) toast("Serveur detecte, mais server/config.php n'est pas rempli");
+      else toast("Connecte a WhatsApp ✔");
+      syncLive();
+      live.timer = setInterval(function () { if (!document.hidden || live.first) syncLive(); }, 3000);
+      document.addEventListener("visibilitychange", function () { if (!document.hidden) syncLive(); });
+    });
+  }
+
   // ---------- Statuts (stories) ----------
   const DAY = 24 * 3600 * 1000;
   const STORY_COLORS = ["#00a884", "#7c5cd6", "#e05656", "#e08a2d", "#3a8dde", "#d6569a", "#111b21"];
@@ -1012,5 +1131,6 @@
   // ---------- Demarrage ----------
   paintSettings();
   renderStories();
+  startLive();
   renderChatList();
 })();
