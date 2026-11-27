@@ -34,3 +34,16 @@ Supprimer pour tous / pour moi, modifier (15 min, ses messages), transferer, fav
 
 ## v1.4
 Galerie medias/documents/liens par discussion, epingler/archiver/sourdine (synchro WhatsApp en essayant), vrais statuts (voir, publier texte ou photo, supprimer), creation et gestion de groupes (nom, description, ajouter/retirer, admins, quitter), envoi et reception de positions (saisie manuelle des coordonnees si la geolocalisation n'est pas disponible).
+
+## v1.5 : outils cabinet
+Menu > "Cabinet (outils pro)". Tout est par compte WhatsApp et reste dans `%APPDATA%\PingChat\whatsapp-data\accounts\<id>\pro.json` (aucun cloud, rien dans le depot).
+- Reponses rapides : /raccourci puis Tab/Entree.
+- Absence : reponse automatique hors horaires, une fois par contact et par fermeture, groupes ignores.
+- Etiquettes : par discussion, filtre dans la liste.
+- Messages programmes : envoyes seulement si l'app est ouverte et connectee (retard max 30 min, sinon "manque").
+- Rendez-vous : rappel automatique N heures avant, detection OUI/NON par mots-cles.
+- Verrouillage par code : verrou d'ecran seulement, pas de chiffrement des donnees.
+- Statuts : publication desactivee (pas encore de choix d'audience), lecture seulement.
+- Poste partage : voir l'onglet "Poste partage" (2e PC lie au meme telephone).
+
+Confidentialite : les messages et donnees patients sont en clair sur le disque de ce PC. Utiliser BitLocker et un mot de passe Windows. Les reponses automatiques et rappels sont envoyes sous le nom du numero connecte, depuis ce PC, sans validation message par message.

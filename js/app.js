@@ -166,6 +166,7 @@
   }
   function notifyIncoming(conv, text, accName, accId) {
     if (conv && conv.muted) return;
+    if (typeof wb !== "undefined" && wb.locked) { conv = { name: "PingChat" }; text = "Nouveau message"; }
     playSound("in");
     const title = accName ? conv.name + " · " + accName : conv.name;
     if (settings.notif && document.hidden && "Notification" in window && Notification.permission === "granted") {
@@ -219,7 +220,7 @@
       $("chat-menu").querySelector('[data-act="pin"]').textContent = c.pinned ? "Desepingler la discussion" : "Epingler la discussion";
       $("chat-menu").querySelector('[data-act="mute"]').textContent = c.muted ? "Reactiver les notifications" : "Mettre en sourdine";
       $("chat-menu").querySelector('[data-act="archive"]').textContent = c.archived ? "Desarchiver la discussion" : "Archiver la discussion";
-      ["media", "location", "mute", "archive"].forEach(function (k) { $("chat-menu").querySelector('[data-act="' + k + '"]').classList.toggle("hidden", !c.wb); });
+      ["media", "location", "mute", "archive", "tags", "plan"].forEach(function (k) { $("chat-menu").querySelector('[data-act="' + k + '"]').classList.toggle("hidden", !c.wb); });
       $("chat-menu").classList.toggle("hidden", !open);
     }
   });
@@ -259,6 +260,7 @@
       CONVERSATIONS.forEach(function (c) { c.unread = 0; });
       save(); renderChatList(); toast("Toutes les discussions sont lues");
     }
+    if (act === "pro") return proOpen("quick");
     if (act === "newgroup") { if (typeof wbNewGroup === "function" && wb.on) wbNewGroup(); else toast("Disponible avec WhatsApp Web"); return; }
     if (act === "reset") {
       if (!confirm("Reinitialiser toutes les discussions ?")) return;
@@ -273,6 +275,8 @@
     if (!conv) return;
     if (act === "info") { if (conv.wb) wbInfo(conv); else toast("Infos disponibles avec WhatsApp Web"); return; }
     if (act === "media") return wbGallery(conv);
+    if (act === "tags") return wbTagPick(conv);
+    if (act === "plan") return proOpen("appts", conv.jid);
     if (act === "location") return wbLocation(conv);
     if (act === "archive") return wbFlag(conv, { archive: !conv.archived }, conv.archived ? "Discussion desarchivee" : "Discussion archivee");
     if (act === "mute") return conv.muted ? wbFlag(conv, { mute: 0 }, "Notifications reactivees") : openList("Mettre en sourdine pendant...", [{ title: "8 heures", onClick: function () { wbFlag(conv, { mute: 8 }, "Sourdine 8 h"); } }, { title: "1 semaine", onClick: function () { wbFlag(conv, { mute: 168 }, "Sourdine 1 semaine"); } }, { title: "Toujours", onClick: function () { wbFlag(conv, { mute: -1 }, "Sourdine activee"); } }], false);
@@ -300,6 +304,7 @@
     const list = CONVERSATIONS.filter(function (c) {
       if (listFilter === "unread" && !c.unread) return false;
       if (listFilter === "pinned" && !c.pinned) return false;
+      if (listFilter.indexOf("tag:") === 0 && (c.tags || []).indexOf(listFilter.slice(4)) < 0) return false;
       if (listFilter === "archived" ? !c.archived : (c.archived && !q)) return false;
       if (!q) return true;
       if (typeof wb !== "undefined" && wb.on && c.jid && wb.hits[c.jid]) return true;
@@ -335,6 +340,7 @@
           '<span class="preview-text"></span></span><span style="display:flex;gap:6px;align-items:center">' + (conv.muted ? '<span class="mute-icon" title="Sourdine">🔕</span>' : "") + pin + badge + "</span></div>" +
         "</div>";
       li.querySelector(".chat-item-name").textContent = conv.name;
+      (conv.tags || []).forEach(function (id) { const l = typeof labelOf === "function" ? labelOf(id) : null; if (!l) return; const dot = document.createElement("i"); dot.className = "tag-dot"; dot.style.background = l.color; dot.title = l.name; li.querySelector(".chat-item-bottom > span:last-child").insertBefore(dot, li.querySelector(".chat-item-bottom > span:last-child").firstChild); });
       li.querySelector(".preview-text").textContent = last ? previewOf(last) : (conv.preview || "");
       if (q && typeof wb !== "undefined" && wb.on && conv.jid && wb.hits[conv.jid]) li.querySelector(".preview-text").textContent = "🔎 " + wb.hits[conv.jid].text;
       paintAvatar(li.querySelector(".avatar"), conv);
@@ -1161,7 +1167,7 @@
     const id = "x" + c.jid;
     AVATAR_COLORS[id] = wbColor(c.jid);
     return { id: id, wb: true, live: true, jid: c.jid, name: c.name || c.phone || c.jid.split("@")[0], phone: c.phone || "", status: c.group ? "groupe" : (c.phone || ""),
-      unread: c.unread || 0, ts: c.ts || 0, preview: c.last || "", timeLabel: c.ts ? hhmm(c.ts) : "", loaded: false, pinned: !!c.pinned, archived: !!c.archived, muted: !!c.muted, days: [{ date: "Aujourd'hui", messages: [] }] };
+      unread: c.unread || 0, ts: c.ts || 0, preview: c.last || "", timeLabel: c.ts ? hhmm(c.ts) : "", loaded: false, pinned: !!c.pinned, archived: !!c.archived, muted: !!c.muted, tags: c.tags || [], days: [{ date: "Aujourd'hui", messages: [] }] };
   }
   function wbRefreshChats() {
     return wbApi("chats").then(function (r) {
@@ -1179,9 +1185,9 @@
         const ex = getConv("x" + c.jid);
         if (!ex) { CONVERSATIONS.push(wbMakeConv(c)); return; }
         ex.name = c.name || ex.name; ex.unread = activeId === ex.id ? 0 : c.unread; ex.ts = c.ts; ex.preview = c.last; ex.timeLabel = c.ts ? hhmm(c.ts) : "";
-        ex.pinned = !!c.pinned; ex.archived = !!c.archived; ex.muted = !!c.muted;
+        ex.pinned = !!c.pinned; ex.archived = !!c.archived; ex.muted = !!c.muted; ex.tags = c.tags || [];
       });
-      renderChatList(); wbLoadStatuses();
+      renderChatList(); wbLoadStatuses(); wbLoadPro();
     });
   }
   function wbSetReactions(o, r) {
@@ -1292,7 +1298,7 @@
   function wbSwitch(id) {
     if (!accById(id)) return Promise.resolve();
     wb.acc = id;
-    CONVERSATIONS.length = 0; activeId = null; closeChat(); renderChatList(); wbRenderRail();
+    CONVERSATIONS.length = 0; activeId = null; closeChat(); wb.pro = null; renderChatList(); wbRenderRail();
     return fetch("api/state?acc=" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (s) {
       if (wb.acc !== id) return;
       wb.accounts = s.accounts || wb.accounts; wbRenderRail(); wbShowState(s);
@@ -1583,9 +1589,11 @@
         const c = JSON.parse(e.data); if (!mine(c)) return; let ex = getConv("x" + c.jid);
         if (!ex) { ex = wbMakeConv(c); CONVERSATIONS.push(ex); }
         ex.name = c.name || ex.name; ex.ts = c.ts; ex.preview = c.last; ex.timeLabel = c.ts ? hhmm(c.ts) : "";
-        ex.pinned = !!c.pinned; ex.archived = !!c.archived; ex.muted = !!c.muted;
+        ex.pinned = !!c.pinned; ex.archived = !!c.archived; ex.muted = !!c.muted; ex.tags = c.tags || [];
         ex.unread = activeId === ex.id ? 0 : c.unread; renderChatList();
       });
+      es.addEventListener("pro", function (e) { const d = JSON.parse(e.data); if (mine(d)) wbLoadPro(); });
+      es.addEventListener("appt", function (e) { const d = JSON.parse(e.data); if (mine(d)) toast(d.name + (d.reply === "confirmed" ? " a CONFIRME son rendez-vous" : " a ANNULE son rendez-vous") + " (" + when(d.at) + ")"); });
       es.addEventListener("statuses", function (e) { const d = JSON.parse(e.data); if (mine(d)) wbLoadStatuses(); });
       es.addEventListener("message", function (e) {
         const d = JSON.parse(e.data);
@@ -1765,7 +1773,8 @@
     $("sc-card").style.background = scColor;
     Array.prototype.forEach.call($("sc-colors").children, function (b, i) { b.classList.toggle("sel", STORY_COLORS[i] === scColor); });
   }
-  function openComposer() { $("sc-text").value = ""; paintColors(); $("story-composer").classList.remove("hidden"); $("sc-text").focus(); }
+  function openComposer() {
+    if (typeof wb !== "undefined" && wb.on) return toast("Publication de statut desactivee pour l'instant (pas de choix de l'audience). Tu peux voir les statuts de tes contacts."); $("sc-text").value = ""; paintColors(); $("story-composer").classList.remove("hidden"); $("sc-text").focus(); }
   function closeComposer() { $("story-composer").classList.add("hidden"); }
   $("sc-close").addEventListener("click", closeComposer);
   $("sc-publish").addEventListener("click", function () {
@@ -1789,6 +1798,166 @@
     };
     r.readAsDataURL(f);
   });
+
+  // ---------- v1.5 : outils cabinet ----------
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function wbLoadPro() {
+    return wbApi("pro").then(function (r) { if (r && r.ok) { wb.pro = r; wbPaintTagChips(); renderChatList(); if (!$("pro-overlay").classList.contains("hidden") && wb.proTab) proTab(wb.proTab, true); } });
+  }
+  function labelOf(id) { return ((wb.pro && wb.pro.labels) || []).find(function (l) { return l.id === id; }); }
+  function wbPaintTagChips() {
+    const f = $("filters"); Array.prototype.slice.call(f.querySelectorAll(".chip[data-tag]")).forEach(function (c) { c.remove(); });
+    const labels = (wb.pro && wb.pro.labels) || [];
+    if (listFilter.indexOf("tag:") === 0 && !labels.some(function (l) { return "tag:" + l.id === listFilter; })) { listFilter = "all"; const all = f.querySelector('[data-filter="all"]'); if (all) all.classList.add("active"); }
+    labels.forEach(function (l) {
+      const b = el("button", "chip" + (listFilter === "tag:" + l.id ? " active" : ""), "● " + l.name); b.dataset.filter = "tag:" + l.id; b.dataset.tag = "1"; b.style.borderColor = l.color; f.appendChild(b);
+    });
+  }
+  function wbTagPick(conv) {
+    const labels = (wb.pro && wb.pro.labels) || [];
+    if (!labels.length) { toast("Cree d'abord des etiquettes : menu > Cabinet > Etiquettes"); return proOpen("tags"); }
+    const items = labels.map(function (l) { return { title: l.name, sub: "", id: l.id, sel: (conv.tags || []).indexOf(l.id) >= 0 }; });
+    openList("Etiquettes de " + conv.name, items, false, "", { multi: true, okText: "Enregistrer", onOk: function () {
+      const jobs = items.filter(function (i) { return i.sel !== ((conv.tags || []).indexOf(i.id) >= 0); }).map(function (i) { return wbApi("tag-chat", { jid: conv.jid, tag: i.id, on: i.sel }); });
+      Promise.all(jobs).then(function (rs) { const last = rs[rs.length - 1]; if (last && last.ok) conv.tags = last.tags; wbRefreshChats(); toast("Etiquettes mises a jour"); });
+    } });
+  }
+  // reponses rapides : /raccourci puis Tab ou Entree
+  (function () {
+    const pop = el("div", "qr-pop hidden"); pop.id = "qr-pop"; messageInput.closest("footer").appendChild(pop);
+    let cur = [], idx = 0;
+    function hide() { pop.classList.add("hidden"); cur = []; }
+    function expand(q) {
+      const c = getConv(activeId); let t = q.text;
+      const first = c && c.name && !/^[+\d]/.test(c.name) ? c.name.split(" ")[0] : "";
+      t = t.replace(/\{nom\}/g, first).replace(/\s+([,.!?])/g, "$1");
+      messageInput.value = t; hide(); messageInput.dispatchEvent(new Event("input")); messageInput.focus();
+    }
+    function paint() {
+      pop.innerHTML = "";
+      cur.forEach(function (q, k) {
+        const r = el("div", "qr-row" + (k === idx ? " sel" : "")); r.appendChild(el("b", "", "/" + q.k)); r.appendChild(el("span", "", q.text.slice(0, 80)));
+        r.onmousedown = function (e) { e.preventDefault(); expand(q); }; pop.appendChild(r);
+      });
+      pop.classList.toggle("hidden", !cur.length);
+    }
+    messageInput.addEventListener("input", function () {
+      const m = /^\/(\S*)$/.exec(messageInput.value);
+      if (!m || !wb.on || !wb.pro) return hide();
+      cur = (wb.pro.quick || []).filter(function (q) { return q.k.indexOf(m[1].toLowerCase()) === 0; }).slice(0, 6); idx = 0; paint();
+    });
+    messageInput.addEventListener("keydown", function (e) {
+      if (!cur.length) return;
+      if (e.key === "ArrowDown") { idx = (idx + 1) % cur.length; paint(); e.preventDefault(); }
+      else if (e.key === "ArrowUp") { idx = (idx + cur.length - 1) % cur.length; paint(); e.preventDefault(); }
+      else if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); e.stopImmediatePropagation(); expand(cur[idx]); }
+      else if (e.key === "Escape") hide();
+    }, true);
+  })();
+
+  // panneau Cabinet
+  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["share", "Poste partage"]];
+  function proOpen(tab, preJid) {
+    if (!wb.on) return toast("Les outils cabinet marchent avec WhatsApp Web");
+    wb.proPre = preJid || null;
+    const t = $("pro-tabs"); t.innerHTML = "";
+    PRO_TABS.forEach(function (x) { const b = el("button", "chip", x[1]); b.dataset.t = x[0]; b.onclick = function () { proTab(x[0]); }; t.appendChild(b); });
+    $("pro-close").onclick = function () { $("pro-overlay").classList.add("hidden"); };
+    $("pro-acc").textContent = "Compte : " + accNameById(wb.acc);
+    $("pro-overlay").classList.remove("hidden");
+    (wb.pro ? Promise.resolve() : wbLoadPro()).then(function () { proTab(tab || "quick"); });
+  }
+  function field(label, node) { const w = el("label", "pro-f"); w.appendChild(el("span", "", label)); w.appendChild(node); return w; }
+  function inp(type, val, ph) { const i = el("input", "ask-input"); i.type = type; if (val != null) i.value = val; if (ph) i.placeholder = ph; return i; }
+  function ta(val, ph) { const t = el("textarea", "ask-input pro-ta"); t.value = val || ""; if (ph) t.placeholder = ph; return t; }
+  function chatSelect(pre) {
+    const s = el("select", "ask-input");
+    CONVERSATIONS.filter(function (c) { return c.wb && !/@g\.us$/.test(c.jid); }).sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (c) { const o = el("option", "", c.name + (c.phone && c.name !== c.phone ? " (" + c.phone + ")" : "")); o.value = c.jid; if (c.jid === pre) o.selected = true; s.appendChild(o); });
+    return s;
+  }
+  function when(ms) { const d = new Date(ms); return d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }) + " " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); }
+  const ST_LABEL = { pending: "en attente", sent: "envoye", missed: "manque (app fermee)", failed: "echec", cancelled: "annule", reminded: "rappel envoye", confirmed: "CONFIRME", past: "passe" };
+  function saveKey(key, value, msg) { return wbApi("pro-set", { key: key, value: value }).then(function (r) { if (r && r.ok) { toast(msg || "Enregistre"); wbLoadPro(); } else toast("Echec : " + ((r && r.error) || "")); }); }
+  function proTab(t, keep) {
+    wb.proTab = t; const body = $("pro-body"); body.innerHTML = "";
+    Array.prototype.forEach.call($("pro-tabs").children, function (b) { b.classList.toggle("active", b.dataset.t === t); });
+    const P = wb.pro || { quick: [], auto: { days: [] }, labels: [], remind: {} };
+    if (t === "quick") {
+      body.appendChild(el("p", "pro-note", "Tape /raccourci dans une discussion puis Tab ou Entree. {nom} est remplace par le prenom du contact."));
+      const rows = P.quick.map(function (q) { return { k: q.k, text: q.text }; }); const box = el("div");
+      function paint() { box.innerHTML = ""; rows.forEach(function (q, i) { const r = el("div", "pro-row"); const k = inp("text", q.k, "raccourci"); k.style.maxWidth = "130px"; k.oninput = function () { q.k = k.value; }; const x = ta(q.text, "texte du message"); x.oninput = function () { q.text = x.value; }; const d = el("button", "btn secondary", "✕"); d.onclick = function () { rows.splice(i, 1); paint(); }; r.appendChild(k); r.appendChild(x); r.appendChild(d); box.appendChild(r); }); }
+      paint(); body.appendChild(box);
+      const add = el("button", "btn secondary", "+ Ajouter"); add.onclick = function () { rows.push({ k: "", text: "" }); paint(); };
+      const sv = el("button", "btn", "Enregistrer"); sv.onclick = function () { saveKey("quick", rows); };
+      const bar = el("div", "pro-bar"); bar.appendChild(add); bar.appendChild(sv); body.appendChild(bar);
+    } else if (t === "auto") {
+      const A = P.auto; body.appendChild(el("p", "pro-note", "Maintenant : " + (P.open ? "cabinet OUVERT (pas de reponse automatique)" : "cabinet FERME") + ". Une seule reponse par contact et par periode de fermeture. Les groupes sont ignores. Marche seulement quand PingChat est ouvert et connecte."));
+      const on = el("input"); on.type = "checkbox"; on.checked = !!A.on; const lw = el("label", "pro-f inline"); lw.appendChild(on); lw.appendChild(el("span", "", "Activer la reponse automatique hors horaires")); body.appendChild(lw);
+      const txt = ta(A.text); body.appendChild(field("Message", txt));
+      const names = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"]; const days = []; 
+      [1, 2, 3, 4, 5, 6, 0].forEach(function (d) {
+        const cfg = (A.days || []).find(function (x) { return x.d === d; }) || { d: d, on: false, start: "09:00", end: "18:00" };
+        const r = el("div", "pro-row"); const c = el("input"); c.type = "checkbox"; c.checked = cfg.on; const s = inp("time", cfg.start), e = inp("time", cfg.end);
+        r.appendChild(c); r.appendChild(el("span", "pro-day", names[d])); r.appendChild(s); r.appendChild(el("span", "", "a")); r.appendChild(e); body.appendChild(r);
+        days.push(function () { return { d: d, on: c.checked, start: s.value || "09:00", end: e.value || "18:00" }; });
+      });
+      const sv = el("button", "btn", "Enregistrer"); sv.onclick = function () { saveKey("auto", { on: on.checked, text: txt.value, days: days.map(function (f) { return f(); }) }, on.checked ? "Reponse automatique activee" : "Reponse automatique desactivee"); }; body.appendChild(sv);
+    } else if (t === "tags") {
+      body.appendChild(el("p", "pro-note", "Cree tes etiquettes (ex : Suivi, Urgent, A rappeler). Pour en poser une : menu de la discussion > Etiquettes. Filtre dans la liste des discussions."));
+      const rows = P.labels.map(function (l) { return { id: l.id, name: l.name, color: l.color }; }); const box = el("div");
+      function paint() { box.innerHTML = ""; rows.forEach(function (l, i) { const r = el("div", "pro-row"); const n = inp("text", l.name, "nom"); n.oninput = function () { l.name = n.value; }; const c = inp("color", l.color); c.style.maxWidth = "56px"; c.oninput = function () { l.color = c.value; }; const d = el("button", "btn secondary", "✕"); d.onclick = function () { rows.splice(i, 1); paint(); }; r.appendChild(n); r.appendChild(c); r.appendChild(d); box.appendChild(r); }); }
+      paint(); body.appendChild(box);
+      const add = el("button", "btn secondary", "+ Etiquette"); add.onclick = function () { rows.push({ id: "", name: "", color: "#7c5cd6" }); paint(); };
+      const sv = el("button", "btn", "Enregistrer"); sv.onclick = function () { saveKey("labels", rows); }; const bar = el("div", "pro-bar"); bar.appendChild(add); bar.appendChild(sv); body.appendChild(bar);
+    } else if (t === "sched") {
+      body.appendChild(el("p", "pro-note", "Le message part seulement si PingChat est ouvert et connecte a l'heure prevue (retard accepte : 30 min). Sinon il est marque « manque » et n'est PAS envoye. Rien n'est envoye depuis un serveur."));
+      const sel = chatSelect(wb.proPre); const txt = ta("", "Message"); const dt = inp("datetime-local", ""); body.appendChild(field("Contact", sel)); body.appendChild(field("Message", txt)); body.appendChild(field("Date et heure", dt));
+      const go = el("button", "btn", "Programmer"); go.onclick = function () { if (!sel.value || !txt.value.trim() || !dt.value) return toast("Contact, message et date sont obligatoires"); wbApi("sched-add", { jid: sel.value, text: txt.value, at: new Date(dt.value).getTime() }).then(function (r) { if (r && r.ok) { toast("Message programme"); proTab("sched"); } else toast("Echec : " + ((r && r.error) || "")); }); }; body.appendChild(go);
+      const list = el("div", "pro-list"); body.appendChild(list);
+      wbApi("sched").then(function (r) { (r.items || []).slice().sort(function (a, b) { return b.at - a.at; }).forEach(function (s) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", s.name + " · " + when(s.at))); tx.appendChild(el("small", "", s.text.slice(0, 100))); row.appendChild(tx); row.appendChild(el("span", "list-badge st-" + s.status, ST_LABEL[s.status] || s.status)); const d = el("button", "btn secondary", s.status === "pending" ? "Annuler" : "✕"); d.onclick = function () { wbApi("sched-del", { id: s.id }).then(function () { proTab("sched"); }); }; row.appendChild(d); list.appendChild(row); }); if (!(r.items || []).length) list.appendChild(el("div", "list-empty", "Aucun message programme")); });
+    } else if (t === "appts") {
+      body.appendChild(el("p", "pro-note", "Un rappel est envoye automatiquement avant le rendez-vous (PingChat doit etre ouvert a ce moment). Si le patient repond OUI/OK/confirme (ou NON/annule), le statut change. Detection par mots-cles : une reponse ambigue reste « rappel envoye »."));
+      const sel = chatSelect(wb.proPre); const dt = inp("datetime-local", ""); const note = inp("text", "", "Motif (facultatif)"); body.appendChild(field("Patient", sel)); body.appendChild(field("Date et heure", dt)); body.appendChild(field("Note", note));
+      const go = el("button", "btn", "Ajouter le rendez-vous"); go.onclick = function () { if (!sel.value || !dt.value) return toast("Patient et date obligatoires"); wbApi("appt-add", { jid: sel.value, at: new Date(dt.value).getTime(), note: note.value }).then(function (r) { if (r && r.ok) { toast("Rendez-vous ajoute"); proTab("appts"); } else toast("Echec : " + ((r && r.error) || "")); }); }; body.appendChild(go);
+      const rh = inp("number", P.remind.hours || 24); rh.min = 1; rh.max = 168; const rt = ta(P.remind.text); body.appendChild(el("h4", "", "Message de rappel")); body.appendChild(field("Heures avant le rendez-vous", rh)); body.appendChild(field("Texte ({nom} {date} {heure})", rt));
+      const sv = el("button", "btn secondary", "Enregistrer le rappel"); sv.onclick = function () { saveKey("remind", { hours: Number(rh.value), text: rt.value }); }; body.appendChild(sv);
+      const list = el("div", "pro-list"); body.appendChild(list);
+      wbApi("appts").then(function (r) { (r.items || []).slice().sort(function (a, b) { return a.at - b.at; }).forEach(function (a) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", a.name + " · " + when(a.at))); if (a.note) tx.appendChild(el("small", "", a.note)); row.appendChild(tx); row.appendChild(el("span", "list-badge st-" + a.status, ST_LABEL[a.status] || a.status)); const d = el("button", "btn secondary", "✕"); d.onclick = function () { wbApi("appt-del", { id: a.id }).then(function () { proTab("appts"); }); }; row.appendChild(d); list.appendChild(row); }); if (!(r.items || []).length) list.appendChild(el("div", "list-empty", "Aucun rendez-vous")); });
+    } else if (t === "lock") {
+      const L = lockCfg(); body.appendChild(el("p", "pro-note", "Le code verrouille l'ecran de PingChat (demarrage et inactivite) et masque le texte des notifications. Ce n'est PAS un chiffrement : les fichiers de donnees sur le disque restent lisibles par quelqu'un qui a acces a la session Windows. Active aussi BitLocker et un mot de passe Windows."));
+      body.appendChild(el("p", "", L ? "Verrouillage actif (apres " + L.mins + " min d'inactivite)." : "Aucun code defini."));
+      const set = el("button", "btn", L ? "Changer le code" : "Definir un code"); set.onclick = function () { askText("Nouveau code (4 a 8 chiffres)", "1234").then(function (v) { if (v === null) return; if (!/^\d{4,8}$/.test(v)) return toast("4 a 8 chiffres"); lockSet(v, L ? L.mins : 5).then(function () { toast("Code enregistre"); proTab("lock"); }); }); }; body.appendChild(set);
+      if (L) {
+        const mi = inp("number", L.mins); mi.min = 1; mi.max = 120; body.appendChild(field("Verrouiller apres (minutes d'inactivite)", mi));
+        const sm = el("button", "btn secondary", "Enregistrer le delai"); sm.onclick = function () { const c = lockCfg(); c.mins = Math.max(1, Math.min(120, Number(mi.value) || 5)); localStorage.setItem(LOCK_KEY, JSON.stringify(c)); toast("Delai enregistre"); }; body.appendChild(sm);
+        const now = el("button", "btn secondary", "Verrouiller maintenant"); now.onclick = function () { $("pro-overlay").classList.add("hidden"); lockShow(); }; body.appendChild(now);
+        const off = el("button", "btn secondary", "Supprimer le code"); off.onclick = function () { askText("Code actuel", "").then(function (v) { if (v === null) return; lockCheck(v).then(function (ok) { if (ok) { localStorage.removeItem(LOCK_KEY); toast("Code supprime"); proTab("lock"); } else toast("Code incorrect"); }); }); }; body.appendChild(off);
+      }
+    } else if (t === "share") {
+      body.appendChild(el("p", "pro-note", "Medecin + secretaire sur deux PC : PingChat ne partage PAS les donnees entre deux PC (pas de cloud, par choix). La solution la plus simple et sure : sur le 2e PC, installe PingChat et scanne son QR avec le meme telephone (Appareils connectes : WhatsApp en accepte jusqu'a 4). Les deux PC recoivent les messages et peuvent repondre."));
+      ["Activer la reponse automatique et les rappels de rendez-vous sur UN SEUL PC, sinon le patient recoit les messages en double.", "Les etiquettes, rendez-vous, reponses rapides et messages programmes ne sont pas synchronises entre les deux PC.", "Les deux PC ecrivent sous le meme numero : le patient ne voit pas qui repond."].forEach(function (x) { body.appendChild(el("p", "pro-note", "• " + x)); });
+    }
+  }
+  // verrouillage par code
+  const LOCK_KEY = "pingchat.lock";
+  function lockCfg() { try { return JSON.parse(localStorage.getItem(LOCK_KEY) || "null"); } catch (e) { return null; } }
+  function sha(s) { return crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)).then(function (b) { return Array.prototype.map.call(new Uint8Array(b), function (x) { return x.toString(16).padStart(2, "0"); }).join(""); }); }
+  function lockSet(pin, mins) { const salt = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(12)), function (x) { return x.toString(16).padStart(2, "0"); }).join(""); return sha(salt + pin).then(function (h) { localStorage.setItem(LOCK_KEY, JSON.stringify({ salt: salt, hash: h, mins: mins || 5 })); lockArm(); }); }
+  function lockCheck(pin) { const c = lockCfg(); if (!c) return Promise.resolve(true); return sha(c.salt + pin).then(function (h) { return h === c.hash; }); }
+  let lockFails = 0, lockUntil = 0, idleT = null;
+  function lockShow() { if (!lockCfg()) return; wb.locked = true; $("lock-overlay").classList.remove("hidden"); $("lock-input").value = ""; $("lock-msg").textContent = ""; setTimeout(function () { $("lock-input").focus(); }, 30); }
+  function lockTry() {
+    if (Date.now() < lockUntil) { $("lock-msg").textContent = "Trop d'essais. Attends " + Math.ceil((lockUntil - Date.now()) / 1000) + " s."; return; }
+    lockCheck($("lock-input").value).then(function (ok) {
+      if (ok) { lockFails = 0; wb.locked = false; $("lock-overlay").classList.add("hidden"); lockArm(); }
+      else { lockFails++; $("lock-input").value = ""; $("lock-msg").textContent = "Code incorrect"; if (lockFails >= 5) { lockUntil = Date.now() + 30000; lockFails = 0; } }
+    });
+  }
+  function lockArm() { clearTimeout(idleT); const c = lockCfg(); if (!c || wb.locked) return; idleT = setTimeout(lockShow, c.mins * 60000); }
+  $("lock-ok").addEventListener("click", lockTry);
+  $("lock-input").addEventListener("keydown", function (e) { if (e.key === "Enter") lockTry(); });
+  ["mousemove", "keydown", "click"].forEach(function (ev) { document.addEventListener(ev, function () { if (!wb.locked) lockArm(); }, true); });
+  if (lockCfg()) lockShow();
 
   // ---------- Demarrage ----------
   paintSettings();

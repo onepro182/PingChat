@@ -41,6 +41,7 @@
               <button data-act="notif">Notifications <span id="notif-state">off</span></button>
               <button data-act="accounts" id="acc-menu-btn">Comptes WhatsApp...</button>
               <button data-act="wb-logout" id="wb-logout-btn" class="hidden">Deconnecter ce compte</button>
+              <button data-act="pro">Cabinet (outils pro)...</button>
               <button data-act="newgroup">Nouveau groupe</button>
               <button data-act="starred">Messages favoris</button>
               <button data-act="rr">Accuses de lecture <span id="rr-state">on</span></button>
@@ -103,6 +104,8 @@
             </button>
             <div class="dropdown hidden" id="chat-menu">
               <button data-act="info">Infos de la discussion</button>
+              <button data-act="tags">Etiquettes...</button>
+              <button data-act="plan">Rendez-vous / programmer</button>
               <button data-act="media">Medias, docs et liens</button>
               <button data-act="location">Envoyer une position</button>
               <button data-act="pin">Epingler la discussion</button>
@@ -247,6 +250,23 @@
       <div class="gal-tabs"><button class="chip active" data-t="media">Medias</button><button class="chip" data-t="docs">Documents</button><button class="chip" data-t="links">Liens</button></div>
       <div id="gal-box" class="gal-box"></div>
       <div class="ask-btns"><button id="gal-close">Fermer</button></div>
+    </div>
+  </div>
+  <div class="overlay hidden" id="pro-overlay">
+    <div class="wb-card pro-card">
+      <h2>Cabinet</h2><small id="pro-acc" class="pro-note"></small>
+      <div class="gal-tabs" id="pro-tabs"></div>
+      <div id="pro-body" class="pro-body"></div>
+      <div class="ask-btns"><button id="pro-close">Fermer</button></div>
+    </div>
+  </div>
+  <div class="overlay hidden lock-ov" id="lock-overlay">
+    <div class="wb-card">
+      <img src="assets/logo.svg" alt="" width="56" height="56" />
+      <h2>PingChat est verrouille</h2>
+      <input id="lock-input" class="ask-input" type="password" inputmode="numeric" maxlength="8" placeholder="Code" autocomplete="off" />
+      <p id="lock-msg" class="wb-msg"></p>
+      <div class="ask-btns"><button id="lock-ok" class="ask-ok">Deverrouiller</button></div>
     </div>
   </div>
   <div class="overlay hidden" id="ask-overlay">

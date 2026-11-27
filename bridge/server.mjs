@@ -243,7 +243,7 @@ function createAccount(id, dir) {
     if (jid.endsWith('@lid') && !lidPn.has(jid)) sock?.signalRepository?.lidMapping?.getPNForLID(jid).then((pn) => pn && learn(jid, pn)).catch(() => {});
     if (live && !msg.fromMe) ch.unread = (ch.unread || 0) + 1;
     saveSoon();
-    if (live) { emit('message', { jid, msg, name: nameOf(jid) }); emit('chat', chatView(jid)); }
+    if (live) { emit('message', { jid, msg, name: nameOf(jid) }); emit('chat', chatView(jid)); if (!msg.fromMe) { try { proIncoming(jid, msg, ts); } catch (e) { console.error('pro', e); } } }
     if (md) {
       if (opts.buf) storeMedia(jid, msg, opts.buf);
       else if (live && !msg.fromMe && md.size <= MAX_MEDIA) {
@@ -273,7 +273,7 @@ function createAccount(id, dir) {
     const c = ensureChat(jid);
     const list = (msgs.get(jid) || []).filter((m) => !m.hidden);
     const last = list[list.length - 1];
-    return { jid, name: nameOf(jid), phone: phoneOf(jid), group: !!c.group, pinned: !!c.pinned, archived: !!c.archived, muted: !!(c.muteUntil && c.muteUntil > Date.now()), unread: c.unread || 0, ts: c.ts || last?.ts || 0, last: last ? (last.deleted ? '🚫 Message supprime' : last.type ? ({ image: '📷 Photo', video: '🎥 Video', sticker: 'Sticker', voice: '🎤 Message vocal', audio: '🎵 Audio', document: '📄 Document' }[last.type] || last.text) + (last.caption ? ' ' + last.caption : '') : last.text) : '' };
+    return { jid, name: nameOf(jid), phone: phoneOf(jid), group: !!c.group, tags: pro.tagged[jid] || [], pinned: !!c.pinned, archived: !!c.archived, muted: !!(c.muteUntil && c.muteUntil > Date.now()), unread: c.unread || 0, ts: c.ts || last?.ts || 0, last: last ? (last.deleted ? '🚫 Message supprime' : last.type ? ({ image: '📷 Photo', video: '🎥 Video', sticker: 'Sticker', voice: '🎤 Message vocal', audio: '🎵 Audio', document: '📄 Document' }[last.type] || last.text) + (last.caption ? ' ' + last.caption : '') : last.text) : '' };
   }
 
   // ---------- Connexion WhatsApp ----------
@@ -595,6 +595,8 @@ function createAccount(id, dir) {
     return [...by.values()].map((g) => { g.items.sort((a, b) => a.ts - b.ts); g.ts = g.items[g.items.length - 1].ts; return g; }).sort((a, b) => (b.fromMe ? 1 : 0) - (a.fromMe ? 1 : 0) || b.ts - a.ts);
   }
   async function postStatus(o) {
+    // desactive tant qu'il n'y a pas de choix explicite de l'audience (sinon le statut part a tous les contacts)
+    throw Object.assign(new Error("Publication de statut desactivee dans cette version : pas encore de choix de l'audience"), { code: 403 });
     ready();
     const audience = [...chats.keys()].filter((j) => j.endsWith('@s.whatsapp.net')).slice(0, 1000);
     if (state.me?.id) audience.push(jidNormalizedUser(state.me.id));
@@ -637,13 +639,97 @@ function createAccount(id, dir) {
     groupCache.delete(jid); saveSoon(); emit('chats', {});
     return act === 'leave' ? {} : { group: await groupInfo(jid) };
   }
+  // ---------- v1.5 : outils cabinet (tout reste en local dans le dossier du compte) ----------
+  const PRO_FILE = path.join(dir, 'pro.json');
+  const proDefault = () => ({ quick: [], auto: { on: false, text: "Bonjour, le cabinet est actuellement ferme. Nous vous repondrons des la reouverture. En cas d'urgence, appelez le 15 (SAMU).", days: [1, 2, 3, 4, 5].map((d) => ({ d, on: true, start: '09:00', end: '18:00' })).concat([{ d: 6, on: false, start: '09:00', end: '13:00' }, { d: 0, on: false, start: '09:00', end: '13:00' }]), notified: {} },
+    labels: [], tagged: {}, sched: [], appts: [], remind: { hours: 24, text: 'Bonjour {nom}, rappel de votre rendez-vous le {date} a {heure}. Repondez OUI pour confirmer ou NON pour annuler.' } });
+  let pro = proDefault();
+  try { const s = JSON.parse(fs.readFileSync(PRO_FILE, 'utf8')); pro = { ...pro, ...s, auto: { ...pro.auto, ...(s.auto || {}) }, remind: { ...pro.remind, ...(s.remind || {}) } }; } catch {}
+  let proTimer = null; const proSave = () => { clearTimeout(proTimer); proTimer = setTimeout(() => { try { fs.writeFileSync(PRO_FILE, JSON.stringify(pro)); } catch {} }, 400); };
+  const str = (x, n) => String(x == null ? '' : x).slice(0, n);
+  const hhOk = (x) => /^([01]\d|2[0-3]):[0-5]\d$/.test(x);
+  const isOpenAt = (ms) => { const d = new Date(ms); const day = pro.auto.days.find((x) => x.d === d.getDay()); if (!day || !day.on) return false; const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); return hm >= day.start && hm < day.end; };
+  // cle de l'absence en cours = instant (arrondi 15 min) ou le cabinet a ferme pour la derniere fois
+  const absenceKey = (now) => { for (let t = now, i = 0; i < 8 * 96; i++, t -= 15 * 60000) if (isOpenAt(t)) return String(Math.floor(t / 900000)); return 'long'; };
+  const proPublic = () => ({ quick: pro.quick, auto: { on: pro.auto.on, text: pro.auto.text, days: pro.auto.days }, labels: pro.labels, remind: pro.remind, open: isOpenAt(Date.now()) });
+  function proSet(key, v) {
+    if (key === 'quick') pro.quick = (Array.isArray(v) ? v : []).slice(0, 100).map((q) => ({ k: str(q.k, 30).replace(/^\//, '').replace(/\s+/g, '').toLowerCase(), text: str(q.text, 2000) })).filter((q) => q.k && q.text);
+    else if (key === 'auto') {
+      pro.auto.on = !!v.on; pro.auto.text = str(v.text, 1000) || pro.auto.text;
+      if (Array.isArray(v.days)) pro.auto.days = v.days.slice(0, 7).map((d) => ({ d: Number(d.d) % 7, on: !!d.on, start: hhOk(d.start) ? d.start : '09:00', end: hhOk(d.end) ? d.end : '18:00' }));
+      pro.auto.notified = {};
+    } else if (key === 'labels') {
+      pro.labels = (Array.isArray(v) ? v : []).slice(0, 30).map((l) => ({ id: str(l.id, 20).replace(/[^\w-]/g, '') || 'l' + Math.random().toString(36).slice(2, 7), name: str(l.name, 30), color: /^#[0-9a-fA-F]{6}$/.test(l.color) ? l.color : '#7c5cd6' })).filter((l) => l.name);
+      const ok = new Set(pro.labels.map((l) => l.id)); for (const j of Object.keys(pro.tagged)) { pro.tagged[j] = pro.tagged[j].filter((x) => ok.has(x)); if (!pro.tagged[j].length) delete pro.tagged[j]; }
+    } else if (key === 'remind') { pro.remind.hours = Math.min(168, Math.max(1, Number(v.hours) || 24)); pro.remind.text = str(v.text, 600) || pro.remind.text; }
+    else throw Object.assign(new Error('reglage inconnu'), { code: 400 });
+    proSave(); emit('pro', {}); return proPublic();
+  }
+  function tagChat(rawJid, tagId, on) {
+    const jid = canon(rawJid); if (!pro.labels.some((l) => l.id === tagId)) throw Object.assign(new Error('etiquette inconnue'), { code: 404 });
+    const set = new Set(pro.tagged[jid] || []); if (on) set.add(tagId); else set.delete(tagId);
+    if (set.size) pro.tagged[jid] = [...set]; else delete pro.tagged[jid];
+    proSave(); emit('chat', chatView(jid)); return { tags: pro.tagged[jid] || [] };
+  }
+  const fill = (tpl, a) => tpl.replace(/\{nom\}/g, /^[+\d]/.test(a.name || '') ? '' : (a.name || '')).replace(/\s+([,.!?])/g, '$1').replace(/  +/g, ' ').replace(/\{date\}/g, new Date(a.at).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })).replace(/\{heure\}/g, new Date(a.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
+  function schedAdd(rawJid, text, at) {
+    const jid = canon(rawJid); text = str(text, 4000).trim(); at = Number(at);
+    if (!text || !isFinite(at)) throw Object.assign(new Error('Texte ou date invalide'), { code: 400 });
+    if (at < Date.now() - 60000) throw Object.assign(new Error('Cette date est deja passee'), { code: 400 });
+    if (pro.sched.filter((s) => s.status === 'pending').length >= 200) throw Object.assign(new Error('Trop de messages programmes'), { code: 400 });
+    const s = { id: 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), jid, name: nameOf(jid), text, at, status: 'pending' }; pro.sched.push(s); proSave(); emit('pro', {}); return s;
+  }
+  const schedDel = (id) => { const s = pro.sched.find((x) => x.id === id); if (s && s.status === 'pending') s.status = 'cancelled'; else pro.sched = pro.sched.filter((x) => x.id !== id); proSave(); emit('pro', {}); };
+  function apptAdd(rawJid, at, note) {
+    const jid = canon(rawJid); at = Number(at);
+    if (!isFinite(at) || at < Date.now() - 60000) throw Object.assign(new Error('Date invalide ou passee'), { code: 400 });
+    const a = { id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), jid, name: nameOf(jid), at, note: str(note, 200), status: 'pending', remindedAt: 0, reply: null }; pro.appts.push(a); proSave(); emit('pro', {}); return a;
+  }
+  const apptDel = (id) => { pro.appts = pro.appts.filter((x) => x.id !== id); proSave(); emit('pro', {}); };
+  const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const YES = /(^|[^a-z])(oui|ok|okay|confirme|confirmer|confirmee|d accord|daccord|yes|wakha|waha|merci)([^a-z]|$)|نعم|تاكيد|تأكيد|موافق|واخا/;
+  const NO = /(^|[^a-z])(non|no|annule|annuler|annulation|cancel|impossible|pas possible|reporter|decaler)([^a-z]|$)|لا\b|الغاء|إلغاء|بطل/;
+  function apptReplyOf(text) { const t = norm(text).replace(/[']/g, ' '); const y = YES.test(t), n = NO.test(t); if (y && !n) return 'confirmed'; if (n && !y) return 'cancelled'; return null; }
+  function proIncoming(jid, msg, ts) {
+    if (isGroup(jid) || msg.fromMe || msg.type) return;
+    // 1) reponse a un rappel de rendez-vous
+    const now = Date.now();
+    const ap = pro.appts.filter((a) => a.jid === jid && a.remindedAt && !a.reply && a.at > now && msg.ts * 1000 >= a.remindedAt - 5000).sort((a, b) => a.at - b.at)[0];
+    if (ap) { const r = apptReplyOf(msg.text); if (r) { ap.reply = r; ap.status = r; proSave(); emit('pro', {}); emit('appt', { id: ap.id, name: ap.name, reply: r, at: ap.at }); return; } }
+    // 2) reponse automatique hors horaires, une seule fois par contact et par absence
+    if (!pro.auto.on || state.status !== 'open' || !sock) return;
+    if (now / 1000 - ts > 120) return;
+    if (isOpenAt(now)) return;
+    const key = absenceKey(now); if (pro.auto.notified[jid] === key) return;
+    pro.auto.notified[jid] = key; proSave();
+    sock.sendMessage(jid, { text: pro.auto.text }).then((sent) => { addMessage(sent, true); }).catch((e) => { delete pro.auto.notified[jid]; console.error('reponse auto', String(e.message || e)); });
+  }
+  async function proTick() {
+    if (removed) return; const now = Date.now(); let dirty = false;
+    for (const s of pro.sched) {
+      if (s.status !== 'pending' || s.at > now) continue;
+      if (now - s.at > 30 * 60000) { s.status = 'missed'; dirty = true; continue; }
+      if (state.status !== 'open' || !sock) continue;
+      try { const sent = await sock.sendMessage(s.jid, { text: s.text }); addMessage(sent, true); s.status = 'sent'; s.sentAt = now; } catch (e) { s.tries = (s.tries || 0) + 1; s.error = String(e.message || e).slice(0, 100); if (s.tries >= 3) s.status = 'failed'; }
+      dirty = true;
+    }
+    for (const a of pro.appts) {
+      if (a.status === 'pending' && a.at < now - 3600000) { a.status = a.reply || 'past'; dirty = true; continue; }
+      if (a.remindedAt || a.at <= now || a.at - now > pro.remind.hours * 3600000) continue;
+      if (state.status !== 'open' || !sock) continue;
+      try { const sent = await sock.sendMessage(a.jid, { text: fill(pro.remind.text, a) }); addMessage(sent, true); a.remindedAt = Date.now(); a.status = 'reminded'; } catch (e) { a.error = String(e.message || e).slice(0, 100); }
+      dirty = true;
+    }
+    if (dirty) { proSave(); emit('pro', {}); }
+  }
+  const proInterval = setInterval(() => { proTick().catch((e) => console.error('pro', String(e.message || e))); }, 20000);
   function mediaFile(f) {
     if (!/^[A-Za-z0-9_-]+\.[a-z0-9]{1,8}$/.test(f || '')) return null;
     const full = path.join(MEDIA, f);
     return fs.existsSync(full) ? full : null;
   }
   async function destroy(wipe) {
-    removed = true; stopping = true; clearTimeout(saveTimer);
+    removed = true; stopping = true; clearTimeout(saveTimer); clearInterval(proInterval);
     try { if (wipe) await sock?.logout(); } catch {}
     try { sock?.end(undefined); } catch {}
     if (wipe) { const rm = () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }; rm(); setTimeout(rm, 3000); }
@@ -654,7 +740,7 @@ function createAccount(id, dir) {
     chatList: () => [...chats.keys()].map(chatView).filter((c) => c.ts || c.last).sort((a, b) => b.ts - a.ts),
     messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); if (!isGroup(jid) && sock && state.status === 'open') sock.presenceSubscribe(jid).catch(() => {}); return (msgs.get(jid) || []).filter((m) => !m.hidden); },
     deleteForAll, deleteForMe, editMsg, forward, star, starred, search, groupInfo, typing, avatar,
-    chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
+    proPublic, proSet, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
     send, sendMedia, react, rejectCall, mediaFile,
     logout: async () => { try { await sock?.logout(); } catch {} },
   };
@@ -833,6 +919,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/statuses') { const a = A(); return json(res, 200, { ok: true, statuses: a ? a.statusList() : [] }); }
     if (p === '/api/gallery') { const a = A(); return json(res, 200, { ok: true, ...(a ? a.gallery(url.searchParams.get('jid') || '') : { media: [], docs: [], links: [] }) }); }
+    if (p === '/api/pro') { const a = A(); return json(res, a ? 200 : 404, { ok: !!a, ...(a ? a.proPublic() : {}) }); }
+    if (p === '/api/sched') { const a = A(); return json(res, 200, { ok: true, items: a ? a.schedList() : [] }); }
+    if (p === '/api/appts') { const a = A(); return json(res, 200, { ok: true, items: a ? a.apptList() : [] }); }
+    if (req.method === 'POST' && ['/api/pro-set', '/api/tag-chat', '/api/sched-add', '/api/sched-del', '/api/appt-add', '/api/appt-del'].includes(p)) {
+      const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+      const w = async (fn) => { try { return json(res, 200, { ok: true, ...(await fn()) }); } catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); } };
+      const jidOk = /^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/.test(String(b.jid || ''));
+      if (p === '/api/pro-set') return w(() => ({ pro: a.proSet(String(b.key || ''), b.value || {}) }));
+      if (p === '/api/sched-del') return w(() => { a.schedDel(String(b.id || '')); return {}; });
+      if (p === '/api/appt-del') return w(() => { a.apptDel(String(b.id || '')); return {}; });
+      if (!jidOk) return json(res, 400, { ok: false, error: 'jid invalide' });
+      if (p === '/api/tag-chat') return w(() => a.tagChat(b.jid, String(b.tag || ''), !!b.on));
+      if (p === '/api/sched-add') return w(() => ({ item: a.schedAdd(b.jid, b.text, b.at) }));
+      if (p === '/api/appt-add') return w(() => ({ item: a.apptAdd(b.jid, b.at, b.note) }));
+    }
     if (p === '/api/starred') { const a = A(); return json(res, 200, { ok: true, items: a ? a.starred() : [] }); }
     if (p === '/api/search') { const a = A(); return json(res, 200, { ok: true, items: a ? a.search(url.searchParams.get('q')) : [] }); }
     if (p === '/api/group') { const a = A(); if (!a) return json(res, 404, { ok: false }); return wrapA(async () => ({ group: await a.groupInfo(url.searchParams.get('jid') || '') })); }

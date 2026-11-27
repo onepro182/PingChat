@@ -876,3 +876,26 @@ video.msg-img { max-width: 320px; border-radius: 14px; display: block; }
 .story-cap { position: absolute; bottom: 8%; left: 0; right: 0; text-align: center; color: #fff; background: rgba(0,0,0,.45); padding: 8px 14px; margin: 0; font-size: 16px; }
 body.has-rail .story-view { left: 56px; }
 #filters .chip { white-space: nowrap; padding-left: 10px; padding-right: 10px; }
+
+.pro-card { max-width: 640px; width: 94vw; }
+.pro-body { max-height: 56vh; overflow: auto; text-align: left; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
+.pro-note { color: var(--text-secondary); font-size: 13px; margin: 0; }
+.pro-f { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.pro-f.inline { flex-direction: row; align-items: center; gap: 8px; }
+.pro-row { display: flex; gap: 6px; align-items: center; }
+.pro-row .ask-input { margin: 0; }
+.pro-ta { min-height: 60px; resize: vertical; font-family: inherit; }
+.pro-day { width: 82px; }
+.pro-bar { display: flex; gap: 8px; }
+.pro-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.pro-item { display: flex; gap: 8px; align-items: center; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+.pro-item > div { flex: 1; min-width: 0; }
+.pro-item small { display: block; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-confirmed { background: #2e9e5b; } .st-cancelled, .st-failed, .st-missed { background: #d9534f; } .st-sent, .st-reminded { background: #3a8dde; } .st-past { background: #777; }
+.tag-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.qr-pop { position: absolute; bottom: 100%; left: 0; right: 0; background: var(--bg-secondary, #1b1740); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 6px; overflow: hidden; z-index: 20; }
+.qr-row { padding: 8px 12px; cursor: pointer; display: flex; gap: 10px; }
+.qr-row span { opacity: .75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qr-row.sel, .qr-row:hover { background: rgba(255,107,87,.2); }
+footer.composer, .chat-footer, main footer { position: relative; }
+.lock-ov { z-index: 999; background: #0d0b24; }

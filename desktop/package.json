@@ -1,7 +1,7 @@
 {
   "name": "pingchat-desktop",
   "productName": "PingChat",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "PingChat : application Windows avec pont WhatsApp (non officiel)",
   "author": "onepro182",
   "main": "main.js",
