@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PingChat</title>
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
-  <meta name="theme-color" content="#00a884" />
+  <meta name="theme-color" content="#2a1b7a" />
   <link rel="stylesheet" href="css/style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -22,7 +22,7 @@
 
       <!-- En-tete de la barre laterale -->
       <header class="sidebar-header">
-        <div class="brand"><img src="assets/logo.svg" alt="PingChat" class="brand-logo" /><span class="brand-name">PingChat</span></div>
+        <div class="brand"><img src="assets/logo.svg" alt="PingChat" class="brand-logo" /><span class="brand-name">ping<b>chat</b></span></div>
         <div class="sidebar-actions">
           <button class="icon-btn" id="theme-btn" title="Mode sombre" aria-label="Basculer le mode sombre">
             <svg class="icon-moon" viewBox="0 0 24 24"><path d="M12.8 2.5a9.5 9.5 0 1 0 8.7 12.9A8 8 0 0 1 12.8 2.5z"/></svg>
@@ -145,7 +145,7 @@
           <button class="icon-btn" id="attach-btn" title="Envoyer une image" aria-label="Envoyer une image">
             <svg viewBox="0 0 24 24"><path d="M16.5 6v11.5a4.5 4.5 0 0 1-9 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 0 1-2 0V6H9v9.5a2.5 2.5 0 0 0 5 0V5a4 4 0 0 0-8 0v12.5a6 6 0 0 0 12 0V6z"/></svg>
           </button>
-          <input type="file" id="file-input" accept="image/*" hidden />
+          <input type="file" id="file-input" hidden />
           <input type="text" id="message-input" placeholder="Ecrire un message" autocomplete="off" />
         </div>
         <button class="icon-btn send-btn" id="send-btn" title="Envoyer" aria-label="Envoyer">
@@ -230,6 +230,7 @@
       <div class="ask-btns"><button id="ask-ok" class="ask-ok">OK</button><button id="ask-cancel">Annuler</button></div>
     </div>
   </div>
+  <div class="call-banner hidden" id="call-banner"><div class="call-tx"><b id="call-who"></b><small id="call-sub"></small></div><button id="call-reject" class="danger">Refuser</button><button id="call-dismiss">Fermer</button></div>
   <div class="toast hidden" id="toast"></div>
 
   <script src="js/data.js"></script>

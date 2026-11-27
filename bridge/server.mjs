@@ -2,6 +2,7 @@
 // Utilise la bibliotheque Baileys. Ecoute seulement sur 127.0.0.1.
 // Les fichiers de session (data/) contiennent l'acces a ton WhatsApp : ne les partage jamais.
 import makeWASocket, {
+  downloadMediaMessage,
   useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, normalizeMessageContent, jidNormalizedUser, Browsers,
 } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
@@ -23,10 +24,46 @@ const MAX_MSGS = 300;
 fs.mkdirSync(DATA, { recursive: true });
 
 
+// ---------- Medias ----------
+const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'video/mp4': 'mp4', 'video/3gpp': '3gp', 'video/webm': 'webm',
+  'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/webm': 'webm', 'application/pdf': 'pdf' };
+const SERVE_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', '3gp': 'video/3gpp', webm: 'video/webm', ogg: 'audio/ogg', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', pdf: 'application/pdf' };
+const MAX_MEDIA = 30 * 1024 * 1024;
+const safeName = (x) => String(x).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80);
+function extFor(mime, name) {
+  const base = String(mime || '').split(';')[0].trim().toLowerCase();
+  if (EXT[base]) return EXT[base];
+  const e = (String(name || '').match(/\.([A-Za-z0-9]{1,8})$/) || [])[1];
+  return e ? e.toLowerCase() : 'bin';
+}
+const num = (x) => Number(x?.toNumber ? x.toNumber() : x) || 0;
+function mediaOf(c) {
+  const pick = (k, type) => (c[k] ? { type, node: c[k] } : null);
+  const r = pick('imageMessage', 'image') || pick('videoMessage', 'video') || pick('stickerMessage', 'sticker') || pick('documentMessage', 'document')
+    || (c.audioMessage ? { type: c.audioMessage.ptt ? 'voice' : 'audio', node: c.audioMessage } : null);
+  if (!r) return null;
+  const n = r.node;
+  const thumb = n.jpegThumbnail && n.jpegThumbnail.length < 20000 ? 'data:image/jpeg;base64,' + Buffer.from(n.jpegThumbnail).toString('base64') : '';
+  return { type: r.type, mime: n.mimetype || '', name: n.fileName || '', size: num(n.fileLength), dur: num(n.seconds), w: n.width || 0, h: n.height || 0, thumb, caption: n.caption || '', node: n };
+}
+function previewOfContent(c) {
+  if (!c) return '';
+  if (c.conversation) return c.conversation;
+  if (c.extendedTextMessage?.text) return c.extendedTextMessage.text;
+  const md = mediaOf(c);
+  if (md) return ({ image: '📷 Photo', video: '🎥 Video', sticker: 'Sticker', voice: '🎤 Message vocal', audio: '🎵 Audio', document: '📄 ' + (md.name || 'Document') }[md.type]) + (md.caption ? ' ' + md.caption : '');
+  return findText(c) || '';
+}
+function ctxOf(c) {
+  for (const k of Object.keys(c)) { const ci = c[k]?.contextInfo; if (ci?.quotedMessage) return ci; }
+  return null;
+}
+
 // ---------- Un compte WhatsApp = une session + une sauvegarde ----------
 function createAccount(id, dir) {
   const AUTH = path.join(dir, 'auth');
   const STORE_FILE = path.join(dir, 'store.json');
+  const MEDIA = path.join(dir, 'media');
   fs.mkdirSync(AUTH, { recursive: true });
   const state = { status: 'starting', qr: null, me: null, error: null };
   const emit = (type, data) => { gEmit(type, { ...(data || {}), acc: id }); changed(); };
@@ -143,17 +180,40 @@ function createAccount(id, dir) {
     if (!chats.has(jid)) chats.set(jid, { id: jid, name: '', unread: 0, ts: 0, group: isGroup(jid) });
     return chats.get(jid);
   }
-  function addMessage(m, live) {
+  function addMessage(m, live, opts = {}) {
     if (m.key?.remoteJid?.endsWith('@lid') && m.key.remoteJidAlt) learn(m.key.remoteJid, m.key.remoteJidAlt);
     const jid = canon(m.key?.remoteJid);
     if (!jid || jid === 'status@broadcast' || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return;
+    const content = normalizeMessageContent(m.message);
+    // reaction recue ou envoyee depuis un autre appareil
+    if (content?.reactionMessage) {
+      const rk = content.reactionMessage.key; const list0 = msgs.get(jid);
+      const target = list0?.find((x) => x.id === rk?.id);
+      if (target) {
+        const who = m.key.fromMe ? 'me' : (m.key.participant || m.key.remoteJid);
+        target.reactions = target.reactions || {};
+        if (content.reactionMessage.text) target.reactions[who] = content.reactionMessage.text; else delete target.reactions[who];
+        saveSoon(); emit('reaction', { jid, id: target.id, reactions: target.reactions });
+      }
+      return;
+    }
     const text = textOf(m);
     if (text === null) return;
     const list = msgs.get(jid) || [];
     if (list.some((x) => x.id === m.key.id)) return;
     const ts = Number(m.messageTimestamp?.toNumber ? m.messageTimestamp.toNumber() : m.messageTimestamp) || Math.floor(Date.now() / 1000);
-    const msg = { id: m.key.id, fromMe: !!m.key.fromMe, text, ts, status: m.key.fromMe ? (STATUS[m.status] || 'sent') : 'delivered' };
+    const msg = { id: m.key.id, fromMe: !!m.key.fromMe, text, ts, status: m.key.fromMe ? (STATUS[m.status] || 'sent') : 'delivered', k: { rj: m.key.remoteJid, p: m.key.participant || '' } };
     if (isGroup(jid) && !msg.fromMe && m.pushName) msg.sender = m.pushName;
+    const md = content ? mediaOf(content) : null;
+    if (md) {
+      msg.type = md.type; msg.caption = md.caption;
+      msg.media = { mime: md.mime, name: md.name, size: md.size, dur: md.dur, w: md.w, h: md.h, thumb: md.thumb, file: '' };
+    }
+    const ci = content ? ctxOf(content) : null;
+    if (ci) {
+      const qc = normalizeMessageContent(ci.quotedMessage);
+      msg.q = { id: ci.stanzaId || '', text: previewOfContent(qc), mine: !!ci.participant && ci.participant === jidNormalizedUser(sock?.user?.id || '') };
+    }
     list.push(msg);
     list.sort((a, b) => a.ts - b.ts);
     if (list.length > MAX_MSGS) list.splice(0, list.length - MAX_MSGS);
@@ -165,12 +225,28 @@ function createAccount(id, dir) {
     if (live && !msg.fromMe) ch.unread = (ch.unread || 0) + 1;
     saveSoon();
     if (live) { emit('message', { jid, msg, name: nameOf(jid) }); emit('chat', chatView(jid)); }
+    if (md) {
+      if (opts.buf) storeMedia(jid, msg, opts.buf);
+      else if (live && !msg.fromMe && md.size <= MAX_MEDIA) {
+        downloadMediaMessage(m, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage })
+          .then((buf) => storeMedia(jid, msg, buf)).catch((e) => console.error('telechargement media', String(e.message || e)));
+      }
+    }
+  }
+  function storeMedia(jid, msg, buf) {
+    try {
+      fs.mkdirSync(MEDIA, { recursive: true });
+      const file = safeName(msg.id) + '.' + extFor(msg.media.mime, msg.media.name);
+      fs.writeFileSync(path.join(MEDIA, file), buf);
+      msg.media.file = file; msg.media.size = buf.length;
+      saveSoon(); emit('msgupdate', { jid, msg });
+    } catch (e) { console.error('ecriture media', e); }
   }
   function chatView(jid) {
     const c = ensureChat(jid);
     const list = msgs.get(jid) || [];
     const last = list[list.length - 1];
-    return { jid, name: nameOf(jid), phone: phoneOf(jid), group: !!c.group, unread: c.unread || 0, ts: c.ts || last?.ts || 0, last: last ? last.text : '' };
+    return { jid, name: nameOf(jid), phone: phoneOf(jid), group: !!c.group, unread: c.unread || 0, ts: c.ts || last?.ts || 0, last: last ? (last.type ? ({ image: '📷 Photo', video: '🎥 Video', sticker: 'Sticker', voice: '🎤 Message vocal', audio: '🎵 Audio', document: '📄 Document' }[last.type] || last.text) + (last.caption ? ' ' + last.caption : '') : last.text) : '' };
   }
 
   // ---------- Connexion WhatsApp ----------
@@ -245,7 +321,21 @@ function createAccount(id, dir) {
     });
     sock.ev.on('contacts.upsert', (ct) => { for (const c of ct) { learnFrom(c); setName(canon(c.id), c.name, c.notify); } saveSoon(); emit('chats', {}); });
     sock.ev.on('contacts.update', (ct) => { for (const c of ct) { learnFrom(c); if (c.id) setName(canon(c.id), c.name, c.notify); } saveSoon(); emit('chats', {}); });
-    sock.ev.on('lid-mapping.update', (mp) => learn(mp.lid, mp.pn));
+    sock.ev.on('call', (calls) => {
+    for (const c of calls || []) {
+      const from = c.chatId || c.from; const jid = canon(from);
+      emit('call', { id: c.id, from, status: c.status, video: !!c.isVideo, name: nameOf(jid) || phoneOf(jid) || 'Contact' });
+      if (['timeout', 'reject'].includes(c.status) && jid && !isGroup(jid)) {
+        const list = msgs.get(jid) || []; const id = 'call-' + c.id;
+        if (!list.some((x) => x.id === id)) {
+          const msg = { id, fromMe: false, text: (c.isVideo ? '📞 Appel video' : '📞 Appel vocal') + (c.status === 'timeout' ? ' manque' : ' refuse'), ts: Math.floor(Date.now() / 1000), status: 'delivered', type: 'call' };
+          list.push(msg); msgs.set(jid, list); const ch = ensureChat(jid); ch.ts = msg.ts; ch.unread = (ch.unread || 0) + 1;
+          saveSoon(); emit('message', { jid, msg, name: nameOf(jid) }); emit('chat', chatView(jid));
+        }
+      }
+    }
+  });
+  sock.ev.on('lid-mapping.update', (mp) => learn(mp.lid, mp.pn));
     sock.ev.on('messages.upsert', ({ messages, type }) => {
       for (const m of messages) addMessage(m, type === 'notify' || !!m.key.fromMe);
     });
@@ -259,12 +349,59 @@ function createAccount(id, dir) {
   }
   const publicState = () => ({ status: state.status, qr: state.qr, me: state.me });
   const unreadTotal = () => { let n = 0; for (const c of chats.values()) n += c.unread || 0; return n; };
-  async function send(rawJid, text) {
-    const jid = canon(rawJid);
+  function quotedFor(jid, quotedId) {
+    if (!quotedId) return undefined;
+    const q = (msgs.get(jid) || []).find((x) => x.id === quotedId);
+    if (!q) return undefined;
+    return { key: { remoteJid: q.k?.rj || jid, id: q.id, fromMe: q.fromMe, participant: q.k?.p || undefined }, message: { conversation: q.text || q.caption || '' } };
+  }
+  function ready() {
     if (state.status !== 'open' || !sock) throw Object.assign(new Error('WhatsApp non connecte'), { code: 409 });
-    const sent = await sock.sendMessage(jid, { text });
+  }
+  async function send(rawJid, text, quotedId) {
+    const jid = canon(rawJid); ready();
+    const sent = await sock.sendMessage(jid, { text }, { quoted: quotedFor(jid, quotedId) });
     addMessage(sent, true);
     return sent.key.id;
+  }
+  async function sendMedia(rawJid, o) {
+    const jid = canon(rawJid); ready();
+    const buf = Buffer.from(String(o.data || ''), 'base64');
+    if (!buf.length || buf.length > MAX_MEDIA) throw Object.assign(new Error('Fichier vide ou trop gros (30 Mo max)'), { code: 400 });
+    const mime = String(o.mime || 'application/octet-stream').slice(0, 100); const caption = String(o.caption || '').slice(0, 1000) || undefined;
+    let content;
+    if (o.kind === 'image') content = { image: buf, caption, mimetype: mime };
+    else if (o.kind === 'video') content = { video: buf, caption, mimetype: mime };
+    else if (o.kind === 'voice') content = { audio: buf, ptt: true, mimetype: mime };
+    else if (o.kind === 'audio') content = { audio: buf, mimetype: mime };
+    else content = { document: buf, mimetype: mime, fileName: String(o.name || 'fichier').slice(0, 120), caption };
+    const sent = await sock.sendMessage(jid, content, { quoted: quotedFor(jid, o.quotedId) });
+    addMessage(sent, true, { buf });
+    return sent.key.id;
+  }
+  async function react(rawJid, id, emoji) {
+    const jid = canon(rawJid); ready();
+    const msg = (msgs.get(jid) || []).find((x) => x.id === id);
+    if (!msg) throw Object.assign(new Error('message introuvable'), { code: 404 });
+    const key = { remoteJid: msg.k?.rj || jid, id: msg.id, fromMe: msg.fromMe, participant: msg.k?.p || undefined };
+    await sock.sendMessage(key.remoteJid, { react: { text: emoji || '', key } });
+    msg.reactions = msg.reactions || {};
+    if (emoji) msg.reactions.me = emoji; else delete msg.reactions.me;
+    saveSoon(); emit('reaction', { jid, id, reactions: msg.reactions });
+  }
+  async function markRead(jid) {
+    if (state.status !== 'open' || !sock) return;
+    const keys = (msgs.get(jid) || []).filter((m) => !m.fromMe && !m.read).slice(-50);
+    if (!keys.length) return;
+    keys.forEach((m) => { m.read = true; });
+    saveSoon();
+    try { await sock.readMessages(keys.map((m) => ({ remoteJid: m.k?.rj || jid, id: m.id, fromMe: false, participant: m.k?.p || undefined }))); } catch (e) { console.error('accuse de lecture', String(e.message || e)); }
+  }
+  async function rejectCall(id, from) { ready(); await sock.rejectCall(String(id), String(from)); }
+  function mediaFile(f) {
+    if (!/^[A-Za-z0-9_-]+\.[a-z0-9]{1,8}$/.test(f || '')) return null;
+    const full = path.join(MEDIA, f);
+    return fs.existsSync(full) ? full : null;
   }
   async function destroy(wipe) {
     removed = true; stopping = true; clearTimeout(saveTimer);
@@ -276,8 +413,8 @@ function createAccount(id, dir) {
   return {
     id, publicState, unreadTotal, canon, destroy,
     chatList: () => [...chats.keys()].map(chatView).filter((c) => c.ts || c.last).sort((a, b) => b.ts - a.ts),
-    messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } return msgs.get(jid) || []; },
-    send,
+    messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); return msgs.get(jid) || []; },
+    send, sendMedia, react, rejectCall, mediaFile,
     logout: async () => { try { await sock?.logout(); } catch {} },
   };
 }
@@ -340,9 +477,9 @@ function json(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
 }
-function readBody(req) {
+function readBody(req, max = 100000) {
   return new Promise((ok, ko) => {
-    let b = ''; req.on('data', (d) => { b += d; if (b.length > 100000) { ko(new Error('trop gros')); req.destroy(); } });
+    let b = ''; req.on('data', (d) => { b += d; if (b.length > max) { ko(new Error('trop gros')); req.destroy(); } });
     req.on('end', () => { try { ok(JSON.parse(b || '{}')); } catch { ok({}); } });
   });
 }
@@ -396,8 +533,44 @@ const server = http.createServer(async (req, res) => {
       if (!jid && b.phone) jid = String(b.phone).replace(/\D+/g, '') + '@s.whatsapp.net';
       const text = String(b.text || '').trim();
       if (!/^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/.test(jid) || !text) return json(res, 400, { ok: false, error: 'jid ou texte invalide' });
-      try { return json(res, 200, { ok: true, id: await a.send(jid, text) }); }
+      try { return json(res, 200, { ok: true, id: await a.send(jid, text, b.quotedId) }); }
       catch (e) { return json(res, e.code === 409 ? 409 : 502, { ok: false, error: String(e.message || e) }); }
+    }
+    if (p === '/api/send-media' && req.method === 'POST') {
+      let b; try { b = await readBody(req, 45 * 1024 * 1024); } catch { return json(res, 413, { ok: false, error: 'fichier trop gros' }); }
+      const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false, error: 'compte inconnu' });
+      const jid = String(b.jid || '');
+      if (!/^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/.test(jid)) return json(res, 400, { ok: false, error: 'jid invalide' });
+      try { return json(res, 200, { ok: true, id: await a.sendMedia(jid, b) }); }
+      catch (e) { return json(res, e.code || 502, { ok: false, error: String(e.message || e) }); }
+    }
+    if (p === '/api/react' && req.method === 'POST') {
+      const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+      try { await a.react(String(b.jid || ''), String(b.id || ''), String(b.emoji || '').slice(0, 16)); return json(res, 200, { ok: true }); }
+      catch (e) { return json(res, e.code || 502, { ok: false, error: String(e.message || e) }); }
+    }
+    if (p === '/api/call/reject' && req.method === 'POST') {
+      const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+      try { await a.rejectCall(b.id, b.from); return json(res, 200, { ok: true }); }
+      catch (e) { return json(res, e.code || 502, { ok: false, error: String(e.message || e) }); }
+    }
+    if (p === '/api/media') {
+      const a = A(); const f = a?.mediaFile(url.searchParams.get('f') || '');
+      if (!f) { res.writeHead(404); return res.end('not found'); }
+      const ext = path.extname(f).slice(1); const mime = SERVE_MIME[ext];
+      const h = { 'Content-Type': mime || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=86400' };
+      if (!mime) h['Content-Disposition'] = 'attachment';
+      const size = fs.statSync(f).size; h['Accept-Ranges'] = 'bytes';
+      const rg = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+      if (rg && (rg[1] || rg[2])) {
+        let st = rg[1] ? Number(rg[1]) : Math.max(0, size - Number(rg[2])); let en = rg[1] && rg[2] ? Number(rg[2]) : size - 1;
+        en = Math.min(en, size - 1);
+        if (st > en) { res.writeHead(416, { 'Content-Range': 'bytes */' + size }); return res.end(); }
+        h['Content-Range'] = `bytes ${st}-${en}/${size}`; h['Content-Length'] = en - st + 1;
+        res.writeHead(206, h); return fs.createReadStream(f, { start: st, end: en }).pipe(res);
+      }
+      h['Content-Length'] = size;
+      res.writeHead(200, h); return fs.createReadStream(f).pipe(res);
     }
     if (p === '/api/logout' && req.method === 'POST') {
       const b = await readBody(req); await accounts.get(b.acc || meta[0]?.id)?.logout();

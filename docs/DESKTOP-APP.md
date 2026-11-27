@@ -19,3 +19,12 @@ Build it yourself: `cd desktop && npm install && npm run build`.
 - Notifications show the contact and the account name.
 - Upgrading from v1.0.0: just run the new exe. Your existing session is moved into account 1 automatically, no new QR needed.
 - Every account keeps one WhatsApp connection open (roughly 50 to 100 MB of memory each). The app asks for confirmation from the 5th account and stops at 10.
+
+## v1.2.0: new look and more features
+- New identity "Pulse": indigo night with a coral/amber accent, own logo and wordmark, dark and light themes.
+- Photos, videos, voice notes, audio, documents and stickers you receive are downloaded and shown. Files are stored under `%APPDATA%\PingChat\whatsapp-data\accounts\<id>\media\`.
+- Send photos (with caption), videos and any file up to 30 MB (paperclip button, drag and drop, or paste).
+- Reply to a message (quote), and real emoji reactions (sent to WhatsApp, and reactions from others are shown).
+- Messages are marked as read on WhatsApp when you open the chat.
+- Calls: PingChat cannot place or answer calls. An incoming call shows a banner with a Refuse button, and missed calls appear in the chat.
+- Not available yet: sending voice notes (receiving works).

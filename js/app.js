@@ -104,6 +104,10 @@
     if (!m) return "";
     if (m.type === "image") return "📷 " + (m.text || "Photo");
     if (m.type === "voice") return "🎤 Message vocal " + fmtDur(m.duration);
+    if (m.type === "audio") return "🎵 Audio";
+    if (m.type === "video") return "🎥 " + (m.text || "Video");
+    if (m.type === "document") return "📄 " + (m.name || "Document");
+    if (m.type === "sticker") return "Sticker";
     return m.text;
   }
   function fmtDur(s) {
@@ -353,6 +357,10 @@
     });
   }
 
+  document.querySelectorAll('.chat-header-actions .icon-btn[title^="Appel"]').forEach(function (b) {
+    b.addEventListener("click", function () { toast("Les appels ne sont pas possibles dans PingChat : passe par ton telephone. Les appels entrants s'affichent ici et tu peux les refuser."); });
+  });
+
   // ---------- Nouvelle discussion ----------
   $("new-chat-btn").addEventListener("click", async function () {
     const name = ((await askText("Nom du contact", "Ex : Sara", "")) || "").trim();
@@ -377,7 +385,7 @@
     }
     const keys = Object.keys(AVATAR_COLORS);
     const id = "c" + Date.now().toString(36);
-    AVATAR_COLORS[id] = ["#7c5cd6", "#e05656", "#00a884", "#e08a2d", "#3a8dde", "#d6569a"][keys.length % 6];
+    AVATAR_COLORS[id] = ["#7c5cd6", "#e05656", "#ff6b57", "#e08a2d", "#3a8dde", "#d6569a"][keys.length % 6];
     CONVERSATIONS.unshift({ id: id, name: name, phone: phone, status: phone || "en ligne", unread: 0, days: [{ date: "Aujourd'hui", messages: [] }] });
     save(); renderChatList(); openConversation(id);
   });
@@ -462,6 +470,14 @@
           qd.appendChild(document.createTextNode(ref.deleted ? "Message supprime" : previewOf(ref)));
           qd.addEventListener("click", function () { jumpTo(ref.id); });
           bubble.appendChild(qd);
+        } else if (msg.q) {
+          const qd = document.createElement("div");
+          qd.className = "quote";
+          const b = document.createElement("b");
+          b.textContent = msg.q.mine ? "Vous" : conv.name;
+          qd.appendChild(b);
+          qd.appendChild(document.createTextNode(msg.q.text || "Message"));
+          bubble.appendChild(qd);
         }
       }
       if (msg.type === "image") {
@@ -478,8 +494,28 @@
           cap.dataset.search = "1";
           bubble.appendChild(cap);
         }
-      } else if (msg.type === "voice") {
+      } else if (msg.type === "voice" || msg.type === "audio") {
         bubble.appendChild(buildVoice(msg));
+      } else if (msg.type === "video") {
+        const v = document.createElement("video");
+        v.className = "msg-img"; v.controls = true; v.preload = "metadata"; v.src = msg.src; if (msg.thumb) v.poster = msg.thumb;
+        bubble.appendChild(v); bubble.classList.add("has-img");
+        if (msg.text) { const cap = document.createElement("span"); cap.className = "msg-caption"; cap.textContent = msg.text; cap.dataset.search = "1"; bubble.appendChild(cap); }
+      } else if (msg.type === "sticker") {
+        const img = document.createElement("img");
+        img.className = "msg-sticker"; img.src = msg.src; img.alt = "sticker";
+        bubble.appendChild(img);
+      } else if (msg.type === "document") {
+        const d = document.createElement("div"); d.className = "doc-card";
+        const ic = document.createElement("span"); ic.className = "doc-ic"; ic.textContent = "📄";
+        const tx = document.createElement("div"); tx.className = "doc-tx";
+        const nm = document.createElement("b"); nm.textContent = msg.name || "Document";
+        const sz = document.createElement("small"); sz.textContent = msg.size ? Math.max(1, Math.round(msg.size / 1024)) + " Ko" : "";
+        tx.appendChild(nm); tx.appendChild(sz);
+        d.appendChild(ic); d.appendChild(tx);
+        if (msg.src) { const a = document.createElement("a"); a.href = msg.src; a.download = msg.name || "fichier"; a.textContent = "Enregistrer"; a.className = "doc-dl"; d.appendChild(a); }
+        bubble.appendChild(d);
+        if (msg.text) { const cap = document.createElement("span"); cap.className = "msg-caption"; cap.textContent = msg.text; cap.dataset.search = "1"; bubble.appendChild(cap); }
       } else {
         const text = document.createElement("span");
         text.className = "msg-text";
@@ -494,12 +530,19 @@
     meta.innerHTML = "<span>" + msg.time + "</span>" + (msg.from === "out" ? (msg.state === "failed" ? '<span class="failed" title="' + (msg.error || "Echec").replace(/"/g, "") + '">⚠ non envoye</span>' : ticksSvg(msg.state)) : "");
     bubble.appendChild(meta);
 
-    if (!msg.deleted && msg.reaction) {
+    const allR = (msg.others || []).concat(msg.reaction ? [msg.reaction] : []);
+    if (!msg.deleted && allR.length) {
       const rb = document.createElement("span");
       rb.className = "reaction-badge";
-      rb.textContent = msg.reaction;
-      rb.title = "Retirer la reaction";
-      rb.addEventListener("click", function (e) { e.stopPropagation(); msg.reaction = null; save(); renderMessages(conv); });
+      const uniq = allR.filter(function (x, k) { return allR.indexOf(x) === k; });
+      rb.textContent = uniq.join("") + (allR.length > 1 ? " " + allR.length : "");
+      if (msg.reaction) rb.title = "Retirer ma reaction";
+      rb.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (!msg.reaction) return;
+        if (conv.wb) return wbReact(conv, msg, "");
+        msg.reaction = null; save(); renderMessages(conv);
+      });
       bubble.appendChild(rb);
       bubble.classList.add("has-reaction");
     }
@@ -534,6 +577,7 @@
       if (msg.reaction === em) b.className = "sel";
       b.addEventListener("click", function () {
         closeMsgMenu();
+        if (conv.wb) return wbReact(conv, msg, msg.reaction === em ? "" : em);
         msg.reaction = msg.reaction === em ? null : em;
         playSound("react"); save(); renderMessages(conv);
       });
@@ -551,7 +595,7 @@
     if (msg.type === "text") item("Copier", function () {
       if (navigator.clipboard) navigator.clipboard.writeText(msg.text).then(function () { toast("Copie"); });
     });
-    item("Supprimer", function () { msg.deleted = true; if (msg.srvId) liveApi("delete.php", { id: msg.srvId }); save(); renderMessages(conv); renderChatList(); }, "danger");
+    if (!conv.wb) item("Supprimer", function () { msg.deleted = true; if (msg.srvId) liveApi("delete.php", { id: msg.srvId }); save(); renderMessages(conv); renderChatList(); }, "danger");
     document.body.appendChild(m);
     msgMenuEl = m;
   }
@@ -620,8 +664,15 @@
   // ---------- Envoi ----------
   function pushMessage(conv, msg) {
     if (conv.wb) {
-      if (msg.type !== "text") return toast("WhatsApp Web : seuls les messages texte sont geres pour l'instant");
-      return wbSend(conv, msg.text);
+      const q = replyTo ? String(replyTo).replace(/^w/, "") : undefined; clearReply();
+      if (msg.type === "text") return wbSend(conv, msg.text, q);
+      if (msg.type === "image") {
+        const mm = /^data:([^;]+);base64,(.*)$/.exec(msg.src || "");
+        if (!mm) return toast("Image illisible");
+        return wbSendMedia(conv, { kind: "image", mime: mm[1], data: mm[2], caption: msg.text || "", quotedId: q });
+      }
+      if (msg.type === "voice") return toast("L'envoi de messages vocaux n'est pas encore disponible (les messages vocaux recus fonctionnent).");
+      return toast("Type de message non gere");
     }
     if (conv.live) {
       if (msg.type !== "text") return toast("WhatsApp : seuls les messages texte sont geres pour l'instant");
@@ -716,8 +767,9 @@
 
   function prepareImage(file) {
     if (!activeId) return toast("Ouvrez d'abord une discussion");
-    if (!file || !file.type.startsWith("image/")) return toast("Ce fichier n'est pas une image");
-    if (file.size > 8 * 1024 * 1024) return toast("Image trop lourde (8 Mo max)");
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return sendFile(file);
+    if (file.size > 16 * 1024 * 1024) return toast("Image trop lourde (16 Mo max)");
     const reader = new FileReader();
     reader.onload = function () {
       pendingImage = reader.result;
@@ -737,6 +789,22 @@
     pushMessage(getConv(activeId), { type: "image", src: src, text: cap });
   }
   $("attach-btn").addEventListener("click", function () { $("file-input").click(); });
+  function sendFile(file) {
+    const conv = getConv(activeId);
+    if (!conv || !conv.wb) return toast("Ce fichier n'est pas une image (l'envoi de fichiers marche avec WhatsApp Web)");
+    if (file.size > 30 * 1024 * 1024) return toast("Fichier trop lourd (30 Mo max)");
+    const reader = new FileReader();
+    reader.onload = function () {
+      const mm = /^data:([^;]*);base64,(.*)$/.exec(reader.result || "");
+      if (!mm) return toast("Fichier illisible");
+      const mime = file.type || "application/octet-stream";
+      const kind = mime.startsWith("video/") ? "video" : mime.startsWith("audio/") ? "audio" : "document";
+      const q = replyTo ? String(replyTo).replace(/^w/, "") : undefined; clearReply();
+      toast("Envoi de " + file.name + "...");
+      wbSendMedia(conv, { kind: kind, mime: mime, name: file.name, data: mm[2], quotedId: q });
+    };
+    reader.readAsDataURL(file);
+  }
   $("file-input").addEventListener("change", function () {
     if (this.files[0]) prepareImage(this.files[0]);
     this.value = "";
@@ -746,7 +814,7 @@
   messageInput.addEventListener("paste", function (e) {
     const items = (e.clipboardData || {}).items || [];
     for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith("image/")) { e.preventDefault(); prepareImage(items[i].getAsFile()); return; }
+      if (items[i].kind === "file") { e.preventDefault(); prepareImage(items[i].getAsFile()); return; }
     }
   });
   chatAreaEl.addEventListener("dragover", function (e) { e.preventDefault(); chatAreaEl.classList.add("drop-hint"); });
@@ -926,7 +994,7 @@
   }
   function makeLiveConv(phone, name) {
     const id = "w" + phone;
-    AVATAR_COLORS[id] = "#25d366";
+    AVATAR_COLORS[id] = "#ffb547";
     return { id: id, live: true, name: name || ("+" + phone), phone: "+" + phone, status: "+" + phone, unread: 0, days: [{ date: "Aujourd'hui", messages: [] }] };
   }
   function dayLabel(ts) {
@@ -1046,8 +1114,34 @@
       renderChatList();
     });
   }
+  function wbSetReactions(o, r) {
+    o.reaction = (r && r.me) || null;
+    o.others = r ? Object.keys(r).filter(function (k) { return k !== "me"; }).map(function (k) { return r[k]; }) : [];
+  }
   function wbToMsg(m) {
-    return { id: "w" + m.id, type: "text", from: m.fromMe ? "out" : "in", text: m.text, time: hhmm(m.ts), ts: m.ts, state: mapState(m.status), sender: m.sender };
+    const o = { id: "w" + m.id, type: "text", from: m.fromMe ? "out" : "in", text: m.text, time: hhmm(m.ts), ts: m.ts, state: mapState(m.status), sender: m.sender };
+    if (m.type === "call") o.type = "call";
+    else if (m.type && m.media) {
+      const f = m.media.file ? "api/media?acc=" + encodeURIComponent(wb.acc) + "&f=" + encodeURIComponent(m.media.file) : "";
+      o.type = m.type; o.text = m.caption || ""; o.name = m.media.name; o.size = m.media.size; o.duration = m.media.dur; o.thumb = m.media.thumb;
+      o.src = f || ((m.type === "image" || m.type === "sticker") ? m.media.thumb : "");
+      if (!o.src && m.type !== "document") { o.type = "text"; o.text = m.text + " (non telecharge)"; }
+    }
+    if (m.q) { o.replyTo = "w" + m.q.id; o.q = m.q; }
+    if (m.reactions) wbSetReactions(o, m.reactions);
+    return o;
+  }
+  function wbReact(conv, msg, emoji) {
+    msg.reaction = emoji || null; renderMessages(conv); playSound("react");
+    wbApi("react", { jid: conv.jid, id: String(msg.id).replace(/^w/, ""), emoji: emoji }).then(function (r) {
+      if (!r || !r.ok) toast("Reaction non envoyee : " + ((r && r.error) || "echec"));
+    });
+  }
+  function wbSendMedia(conv, body) {
+    return wbApi("send-media", Object.assign({ jid: conv.jid }, body)).then(function (r) {
+      if (r && r.ok) { playSound("send"); return; }
+      toast("WhatsApp : " + ((r && r.error) || "echec"));
+    });
   }
   function wbAppend(conv, m) {
     if (findMsg(conv, "w" + m.id)) return false;
@@ -1068,8 +1162,8 @@
       renderChatList();
     });
   }
-  function wbSend(conv, text) {
-    wbApi("send", { jid: conv.jid, text: text }).then(function (r) {
+  function wbSend(conv, text, quotedId) {
+    wbApi("send", { jid: conv.jid, text: text, quotedId: quotedId }).then(function (r) {
       if (r && r.ok) { playSound("send"); return; }
       toast("WhatsApp : " + ((r && r.error) || "echec"));
     });
@@ -1171,6 +1265,21 @@
     });
   }
   function wbManage() { wbRenderManage(); $("acc-overlay").classList.remove("hidden"); }
+  let callInfo = null;
+  function wbOnCall(d) {
+    const ban = $("call-banner");
+    if (d.status === "offer" || d.status === "ringing") {
+      callInfo = d;
+      const who = d.name + (wb.accounts.length > 1 ? " · " + accNameById(d.acc) : "");
+      $("call-who").textContent = who;
+      $("call-sub").textContent = (d.video ? "Appel video" : "Appel vocal") + " entrant. PingChat ne peut pas decrocher : reponds sur ton telephone.";
+      ban.classList.remove("hidden"); playSound("in");
+      if (settings.notif && document.hidden && "Notification" in window && Notification.permission === "granted") {
+        try { new Notification("Appel de " + who, { body: "Reponds sur ton telephone", icon: "assets/logo.svg" }); } catch (x) {}
+      }
+      clearTimeout(wbOnCall.t); wbOnCall.t = setTimeout(function () { ban.classList.add("hidden"); }, 40000);
+    } else if (callInfo && callInfo.id === d.id) { ban.classList.add("hidden"); callInfo = null; }
+  }
   function startWb() {
     return fetch("api/state").then(function (r) { return r.json(); }).then(function (s) {
       if (!s || s.bridge !== "baileys") return false;
@@ -1180,6 +1289,13 @@
       CONVERSATIONS.length = 0; activeId = null; closeChat();
       stories = stories.filter(function (x) { return x.owner === "me"; }); renderStories();
       renderChatList(); wbRenderRail(); wbShowState(s);
+      $("call-dismiss").onclick = function () { $("call-banner").classList.add("hidden"); };
+      $("call-reject").onclick = function () {
+        if (!callInfo) return;
+        fetch("api/call/reject", { method: "POST", headers: { "Content-Type": "application/json", "X-PingChat": "1" }, body: JSON.stringify({ acc: callInfo.acc, id: callInfo.id, from: callInfo.from }) })
+          .then(function (r) { return r.json(); }).then(function (r) { toast(r && r.ok ? "Appel refuse" : "Refus impossible : " + ((r && r.error) || "")); });
+        $("call-banner").classList.add("hidden");
+      };
       $("acc-close").onclick = function () { $("acc-overlay").classList.add("hidden"); };
       $("acc-new").onclick = function () { $("acc-overlay").classList.add("hidden"); wbAddAccount(); };
       $("wb-remove-btn").onclick = function () {
@@ -1210,6 +1326,17 @@
         if (ex.loaded && wbAppend(ex, d.msg) && activeId === ex.id) { renderMessages(ex); scrollToBottom(); }
         if (!d.msg.fromMe) notifyIncoming(ex, d.msg.text, wb.accounts.length > 1 ? accNameById(wb.acc) : "", wb.acc);
       });
+      es.addEventListener("reaction", function (e) {
+        const d = JSON.parse(e.data); if (!mine(d)) return; const ex = getConv("x" + d.jid); if (!ex) return;
+        const m = findMsg(ex, "w" + d.id); if (!m) return;
+        wbSetReactions(m, d.reactions); if (activeId === ex.id) renderMessages(ex);
+      });
+      es.addEventListener("msgupdate", function (e) {
+        const d = JSON.parse(e.data); if (!mine(d)) return; const ex = getConv("x" + d.jid); if (!ex) return;
+        const m = findMsg(ex, "w" + d.msg.id); if (!m) return;
+        Object.assign(m, wbToMsg(d.msg)); if (activeId === ex.id) renderMessages(ex);
+      });
+      es.addEventListener("call", function (e) { wbOnCall(JSON.parse(e.data)); });
       es.addEventListener("status", function (e) {
         const d = JSON.parse(e.data); if (!mine(d)) return; const ex = getConv("x" + d.jid); if (!ex) return;
         const m = findMsg(ex, "w" + d.id);
@@ -1221,7 +1348,7 @@
 
   // ---------- Statuts (stories) ----------
   const DAY = 24 * 3600 * 1000;
-  const STORY_COLORS = ["#00a884", "#7c5cd6", "#e05656", "#e08a2d", "#3a8dde", "#d6569a", "#111b21"];
+  const STORY_COLORS = ["#ff6b57", "#7c5cd6", "#e05656", "#e08a2d", "#3a8dde", "#d6569a", "#111b21"];
   let stories = [];
   (function loadStories() {
     let raw = null;
@@ -1266,7 +1393,7 @@
       return b;
     }
     const mine = storiesOf("me");
-    bar.appendChild(bubbleFor("me", "Mon statut", "#00a884", mine.length ? "seen" : "", function () {
+    bar.appendChild(bubbleFor("me", "Mon statut", "#ff6b57", mine.length ? "seen" : "", function () {
       if (mine.length) openStoryViewer("me"); else openComposer();
     }, mine.length > 0));
     CONVERSATIONS.forEach(function (c) {
