@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PingChat</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="app" id="app">
+
+    <!-- ============ BARRE LATERALE ============ -->
+    <aside class="sidebar" id="sidebar">
+
+      <!-- En-tete de la barre laterale -->
+      <header class="sidebar-header">
+        <div class="avatar avatar-me" title="Mon profil">M</div>
+        <div class="sidebar-actions">
+          <button class="icon-btn" title="Statut" aria-label="Statut">
+            <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 1.5 1.5 0 0 0-3 0 6 6 0 1 1-6-6 1.5 1.5 0 0 0 0-3zm0 5.5A3.5 3.5 0 1 0 15.5 12 3.5 3.5 0 0 0 12 8.5z"/></svg>
+          </button>
+          <button class="icon-btn" title="Nouvelle discussion" aria-label="Nouvelle discussion">
+            <svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm-8 4h2v3h3v2h-3v3h-2v-3H9V9h3z"/></svg>
+          </button>
+          <button class="icon-btn" title="Menu" aria-label="Menu">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Barre de recherche -->
+      <div class="search-bar">
+        <div class="search-input-wrap">
+          <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+          <input type="text" id="search-input" placeholder="Rechercher ou demarrer une discussion" autocomplete="off" />
+        </div>
+      </div>
+
+      <!-- Liste des discussions (remplie par js/app.js) -->
+      <ul class="chat-list" id="chat-list" role="listbox" aria-label="Discussions"></ul>
+    </aside>
+
+    <!-- ============ ZONE DE DISCUSSION ============ -->
+    <main class="chat-area" id="chat-area">
+
+      <!-- En-tete de la discussion -->
+      <header class="chat-header">
+        <button class="icon-btn back-btn" id="back-btn" aria-label="Retour a la liste">
+          <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        </button>
+        <div class="avatar" id="chat-avatar">?</div>
+        <div class="chat-header-info">
+          <h2 class="chat-title" id="chat-title">...</h2>
+          <p class="chat-status" id="chat-status">en ligne</p>
+        </div>
+        <div class="chat-header-actions">
+          <button class="icon-btn" title="Appel video" aria-label="Appel video">
+            <svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11z"/></svg>
+          </button>
+          <button class="icon-btn" title="Appel vocal" aria-label="Appel vocal">
+            <svg viewBox="0 0 24 24"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.4 11.4 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .57 3.57 1 1 0 0 1-.25 1.02z"/></svg>
+          </button>
+          <button class="icon-btn" title="Rechercher" aria-label="Rechercher dans la discussion">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+          </button>
+          <button class="icon-btn" title="Options" aria-label="Options de la discussion">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Messages (remplis par js/app.js) -->
+      <section class="messages" id="messages" aria-live="polite"></section>
+
+      <!-- Indicateur de saisie -->
+      <div class="typing-indicator hidden" id="typing-indicator">
+        <div class="avatar avatar-sm" id="typing-avatar">?</div>
+        <div class="typing-bubble">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>
+      </div>
+
+      <!-- Barre de saisie -->
+      <footer class="composer">
+        <button class="icon-btn" title="Emojis" aria-label="Emojis">
+          <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-4 8.5A1.5 1.5 0 1 1 9.5 9 1.5 1.5 0 0 1 8 10.5zm4 7c-2.33 0-4.31-1.46-5.11-3.5h10.22c-.8 2.04-2.78 3.5-5.11 3.5zm4.5-7a1.5 1.5 0 1 1 1.5-1.5 1.5 1.5 0 0 1-1.5 1.5z"/></svg>
+        </button>
+        <button class="icon-btn" title="Joindre" aria-label="Joindre un fichier">
+          <svg viewBox="0 0 24 24"><path d="M16.5 6v11.5a4.5 4.5 0 0 1-9 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 0 1-2 0V6H9v9.5a2.5 2.5 0 0 0 5 0V5a4 4 0 0 0-8 0v12.5a6 6 0 0 0 12 0V6z"/></svg>
+        </button>
+        <input type="text" id="message-input" placeholder="Ecrire un message" autocomplete="off" />
+        <button class="icon-btn send-btn" id="send-btn" title="Envoyer" aria-label="Envoyer">
+          <svg class="icon-mic" viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12z"/></svg>
+          <svg class="icon-send hidden" viewBox="0 0 24 24"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        </button>
+      </footer>
+    </main>
+
+    <!-- Ecran d'accueil (aucune discussion selectionnee) -->
+    <div class="welcome-screen" id="welcome-screen">
+      <div class="welcome-content">
+        <div class="welcome-logo">
+          <svg viewBox="0 0 24 24" width="120" height="120">
+            <path fill="#25D366" d="M12 2A10 10 0 0 0 3.64 18.09L2 22l4-1.6A10 10 0 1 0 12 2z"/>
+            <path fill="#fff" d="M12 5.5A6.5 6.5 0 0 0 6.6 16.2l.3.47-1 2.63 2.7-.95.46.27A6.5 6.5 0 1 0 12 5.5z"/>
+            <circle fill="#fff" cx="9.2" cy="11.8" r="1.2"/>
+            <circle fill="#fff" cx="12.4" cy="11.8" r="1.2"/>
+            <circle fill="#fff" cx="15.6" cy="11.8" r="1.2"/>
+          </svg>
+        </div>
+        <h1>PingChat</h1>
+        <p>Envoyez et recevez des messages sans garder votre telephone connecte.</p>
+        <p class="welcome-sub">Choisissez une discussion pour commencer.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
