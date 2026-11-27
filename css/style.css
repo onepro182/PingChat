@@ -900,3 +900,4 @@ body.has-rail .story-view { left: 56px; }
 footer.composer, .chat-footer, main footer { position: relative; }
 .lock-ov { z-index: 999; background: #0d0b24; }
 .menu-about { padding: 8px 14px; font-size: 12px; color: var(--text-secondary); border-top: 1px solid var(--border); margin-top: 4px; cursor: default; }
+.pro-why { white-space: normal !important; }

@@ -50,3 +50,6 @@ Confidentialite : les messages et donnees patients sont en clair sur le disque d
 
 ## v1.5.1
 Ligne "A propos : PingChat version X" en bas du menu parametres (lue depuis la version de l'application).
+
+## v1.5.2
+Rendez-vous : correction de la detection des reponses (l'horloge du telephone n'est plus comparee, @lid resolu, discussion avec soi-meme, plus de formes de oui/non dont arabe et emoji, un patient peut changer sa reponse) et journal des reponses ignorees dans l'onglet Rendez-vous.

@@ -243,7 +243,7 @@ function createAccount(id, dir) {
     if (jid.endsWith('@lid') && !lidPn.has(jid)) sock?.signalRepository?.lidMapping?.getPNForLID(jid).then((pn) => pn && learn(jid, pn)).catch(() => {});
     if (live && !msg.fromMe) ch.unread = (ch.unread || 0) + 1;
     saveSoon();
-    if (live) { emit('message', { jid, msg, name: nameOf(jid) }); emit('chat', chatView(jid)); if (!msg.fromMe) { try { proIncoming(jid, msg, ts); } catch (e) { console.error('pro', e); } } }
+    if (live) { emit('message', { jid, msg, name: nameOf(jid) }); emit('chat', chatView(jid)); try { proIncoming(jid, msg, ts); } catch (e) { console.error('pro', e); } }
     if (md) {
       if (opts.buf) storeMedia(jid, msg, opts.buf);
       else if (live && !msg.fromMe && md.size <= MAX_MEDIA) {
@@ -686,23 +686,58 @@ function createAccount(id, dir) {
     const a = { id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), jid, name: nameOf(jid), at, note: str(note, 200), status: 'pending', remindedAt: 0, reply: null }; pro.appts.push(a); proSave(); emit('pro', {}); return a;
   }
   const apptDel = (id) => { pro.appts = pro.appts.filter((x) => x.id !== id); proSave(); emit('pro', {}); };
-  const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const YES = /(^|[^a-z])(oui|ok|okay|confirme|confirmer|confirmee|d accord|daccord|yes|wakha|waha|merci)([^a-z]|$)|نعم|تاكيد|تأكيد|موافق|واخا/;
-  const NO = /(^|[^a-z])(non|no|annule|annuler|annulation|cancel|impossible|pas possible|reporter|decaler)([^a-z]|$)|لا\b|الغاء|إلغاء|بطل/;
-  function apptReplyOf(text) { const t = norm(text).replace(/[']/g, ' '); const y = YES.test(t), n = NO.test(t); if (y && !n) return 'confirmed'; if (n && !y) return 'cancelled'; return null; }
+  const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\u2018\u2019']/g, ' ').replace(/\s+/g, ' ').trim();
+  const AR = '[^\\u0600-\\u06ff]';
+  const YES = new RegExp('(^|[^a-z])(ou+i+|ok+|okay|oki|confirme|confirmer|confirmee|confirmation|d accord|daccord|yes|yep|wakha|waha|wa?kha|sure|bien recu|c est bon)([^a-z]|$)|(^|' + AR + ')(نعم|اه|ايه|تاكيد|تأكيد|مؤكد|موافق|واخا|واكخا|اوكي|أكيد|اكيد)(' + AR + '|$)|\\u{1F44D}|\\u2705|\\u{1F44C}', 'u');
+  const NO = new RegExp('(^|[^a-z])(no+n+|non|nan|annule|annuler|annulation|cancel|impossible|pas possible|reporter|decaler|decale)([^a-z]|$)|(^|' + AR + ')(لا|الغاء|إلغاء|بطل|ما\u0646ش|مانيش|مستحيل)(' + AR + '|$)|\\u274C|\\u{1F44E}', 'u');
+  function apptReplyOf(text) { const t = norm(text); const y = YES.test(t), n = NO.test(t); if (y && !n) return 'confirmed'; if (n && !y) return 'cancelled'; return null; }
+  const proSent = new Set(); const noteSent = (sent) => { if (sent?.key?.id) { proSent.add(sent.key.id); if (proSent.size > 500) proSent.delete(proSent.values().next().value); } return sent; };
+  pro.log = Array.isArray(pro.log) ? pro.log : [];
+  function plog(jid, text, why) { pro.log.push({ t: Date.now(), name: nameOf(jid), jid, text: str(text, 50), why }); if (pro.log.length > 40) pro.log.splice(0, pro.log.length - 40); proSave(); emit('pro', {}); }
+  function matchAppt(jid, msg, now) {
+    const mine = pro.appts.filter((a) => canon(a.jid) === jid);
+    if (!mine.length) {
+      const waiting = pro.appts.filter((a) => a.remindedAt && !a.reply && a.at > now);
+      if (waiting.length) plog(jid, msg.text, "ignore : ce contact n'a aucun rendez-vous (attendus : " + [...new Set(waiting.map((a) => a.name || phoneOf(canon(a.jid)) || a.jid))].join(', ') + (jid.endsWith('@lid') ? ' ; identifiant @lid non resolu' : '') + ')');
+      return null;
+    }
+    const future = mine.filter((a) => a.at > now);
+    if (!future.length) { plog(jid, msg.text, 'ignore : rendez-vous passe'); return null; }
+    const rem = future.filter((a) => a.remindedAt).sort((a, b) => (a.reply ? 1 : 0) - (b.reply ? 1 : 0) || a.at - b.at);
+    if (!rem.length) { plog(jid, msg.text, "ignore : le rappel n'a pas encore ete envoye (statut en attente)"); return null; }
+    return rem[0];
+  }
+  function applyReply(ap, text, jid) {
+    const r = apptReplyOf(text);
+    if (!r) { plog(jid, text, 'ignore : reponse pas reconnue (ni oui ni non clair)'); return false; }
+    if (ap.reply === r) { plog(jid, text, 'ignore : rendez-vous deja ' + (r === 'confirmed' ? 'confirme' : 'annule')); return false; }
+    ap.reply = r; ap.status = r; proSave(); emit('pro', {}); emit('appt', { id: ap.id, name: ap.name, reply: r, at: ap.at });
+    plog(jid, text, 'OK : rendez-vous ' + (r === 'confirmed' ? 'confirme' : 'annule')); return true;
+  }
   function proIncoming(jid, msg, ts) {
-    if (isGroup(jid) || msg.fromMe || msg.type) return;
-    // 1) reponse a un rappel de rendez-vous
+    if (isGroup(jid) || msg.type) return;
+    const myj = canon(jidNormalizedUser(state.me?.id || ''));
+    const selfChat = !!myj && jid === myj;
+    if (msg.fromMe && !selfChat) return;           // message ecrit par toi a un patient
+    if (proSent.has(msg.id)) return;               // nos propres rappels / reponses automatiques
     const now = Date.now();
-    const ap = pro.appts.filter((a) => a.jid === jid && a.remindedAt && !a.reply && a.at > now && msg.ts * 1000 >= a.remindedAt - 5000).sort((a, b) => a.at - b.at)[0];
-    if (ap) { const r = apptReplyOf(msg.text); if (r) { ap.reply = r; ap.status = r; proSave(); emit('pro', {}); emit('appt', { id: ap.id, name: ap.name, reply: r, at: ap.at }); return; } }
+    // identifiant @lid pas encore relie a un numero : on essaie de le resoudre avant de comparer
+    if (jid.endsWith('@lid') && !lidPn.has(jid) && sock?.signalRepository?.lidMapping?.getPNForLID && !msg._retry) {
+      msg._retry = true;
+      sock.signalRepository.lidMapping.getPNForLID(jid).then((pn) => { if (pn) learn(jid, pn); proIncoming(canon(jid), msg, ts); }).catch(() => proIncoming(jid, msg, ts));
+      return;
+    }
+    // 1) reponse a un rappel de rendez-vous (on ne compare PAS l'heure du telephone : elle peut etre decalee)
+    const ap = matchAppt(jid, msg, now);
+    if (ap) { applyReply(ap, msg.text, jid); return; }
+    if (msg.fromMe) return;
     // 2) reponse automatique hors horaires, une seule fois par contact et par absence
     if (!pro.auto.on || state.status !== 'open' || !sock) return;
     if (now / 1000 - ts > 120) return;
     if (isOpenAt(now)) return;
     const key = absenceKey(now); if (pro.auto.notified[jid] === key) return;
     pro.auto.notified[jid] = key; proSave();
-    sock.sendMessage(jid, { text: pro.auto.text }).then((sent) => { addMessage(sent, true); }).catch((e) => { delete pro.auto.notified[jid]; console.error('reponse auto', String(e.message || e)); });
+    sock.sendMessage(jid, { text: pro.auto.text }).then((sent) => { noteSent(sent); addMessage(sent, true); }).catch((e) => { delete pro.auto.notified[jid]; console.error('reponse auto', String(e.message || e)); });
   }
   async function proTick() {
     if (removed) return; const now = Date.now(); let dirty = false;
@@ -710,14 +745,14 @@ function createAccount(id, dir) {
       if (s.status !== 'pending' || s.at > now) continue;
       if (now - s.at > 30 * 60000) { s.status = 'missed'; dirty = true; continue; }
       if (state.status !== 'open' || !sock) continue;
-      try { const sent = await sock.sendMessage(s.jid, { text: s.text }); addMessage(sent, true); s.status = 'sent'; s.sentAt = now; } catch (e) { s.tries = (s.tries || 0) + 1; s.error = String(e.message || e).slice(0, 100); if (s.tries >= 3) s.status = 'failed'; }
+      try { const sent = noteSent(await sock.sendMessage(s.jid, { text: s.text })); addMessage(sent, true); s.status = 'sent'; s.sentAt = now; } catch (e) { s.tries = (s.tries || 0) + 1; s.error = String(e.message || e).slice(0, 100); if (s.tries >= 3) s.status = 'failed'; }
       dirty = true;
     }
     for (const a of pro.appts) {
       if (a.status === 'pending' && a.at < now - 3600000) { a.status = a.reply || 'past'; dirty = true; continue; }
       if (a.remindedAt || a.at <= now || a.at - now > pro.remind.hours * 3600000) continue;
       if (state.status !== 'open' || !sock) continue;
-      try { const sent = await sock.sendMessage(a.jid, { text: fill(pro.remind.text, a) }); addMessage(sent, true); a.remindedAt = Date.now(); a.status = 'reminded'; } catch (e) { a.error = String(e.message || e).slice(0, 100); }
+      try { const sent = noteSent(await sock.sendMessage(a.jid, { text: fill(pro.remind.text, a) })); addMessage(sent, true); a.remindedAt = Date.now(); a.status = 'reminded'; } catch (e) { a.error = String(e.message || e).slice(0, 100); }
       dirty = true;
     }
     if (dirty) { proSave(); emit('pro', {}); }
@@ -740,7 +775,7 @@ function createAccount(id, dir) {
     chatList: () => [...chats.keys()].map(chatView).filter((c) => c.ts || c.last).sort((a, b) => b.ts - a.ts),
     messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); if (!isGroup(jid) && sock && state.status === 'open') sock.presenceSubscribe(jid).catch(() => {}); return (msgs.get(jid) || []).filter((m) => !m.hidden); },
     deleteForAll, deleteForMe, editMsg, forward, star, starred, search, groupInfo, typing, avatar,
-    proPublic, proSet, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
+    proPublic, proSet, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), proLog: () => pro.log.slice().reverse(), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
     send, sendMedia, react, rejectCall, mediaFile,
     logout: async () => { try { await sock?.logout(); } catch {} },
   };
@@ -921,6 +956,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/statuses') { const a = A(); return json(res, 200, { ok: true, statuses: a ? a.statusList() : [] }); }
     if (p === '/api/gallery') { const a = A(); return json(res, 200, { ok: true, ...(a ? a.gallery(url.searchParams.get('jid') || '') : { media: [], docs: [], links: [] }) }); }
     if (p === '/api/pro') { const a = A(); return json(res, a ? 200 : 404, { ok: !!a, ...(a ? a.proPublic() : {}) }); }
+    if (p === '/api/pro-log') { const a = A(); return json(res, 200, { ok: true, items: a ? a.proLog() : [] }); }
     if (p === '/api/sched') { const a = A(); return json(res, 200, { ok: true, items: a ? a.schedList() : [] }); }
     if (p === '/api/appts') { const a = A(); return json(res, 200, { ok: true, items: a ? a.apptList() : [] }); }
     if (req.method === 'POST' && ['/api/pro-set', '/api/tag-chat', '/api/sched-add', '/api/sched-del', '/api/appt-add', '/api/appt-del'].includes(p)) {
