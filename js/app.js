@@ -278,6 +278,7 @@
     if (act === "media") return wbGallery(conv);
     if (act === "tags") return wbTagPick(conv);
     if (act === "plan") return proOpen("appts", conv.jid);
+    if (act === "lib") { if (conv.wb) return proOpen("lib", conv.jid); toast("Disponible avec WhatsApp Web"); return; }
     if (act === "export") return wbExportChat(conv);
     if (act === "note") { if (conv.wb) return proOpen("note", conv.jid); toast("Notes disponibles avec WhatsApp Web"); return; }
     if (act === "location") return wbLocation(conv);
@@ -1239,7 +1240,7 @@
     wbApi("messages?jid=" + encodeURIComponent(conv.jid)).then(function (r) {
       const list = (r && (r.messages || r.items)) || [];
       if (!list.length) return toast("Rien a exporter");
-      let h = "<!doctype html><meta charset=utf-8><title>" + esc(conv.name) + "</title><style>body{font:14px Arial,sans-serif;max-width:700px;margin:20px auto}h1{font-size:20px}.m{margin:6px 0;padding:6px 10px;border-radius:8px;background:#eee;page-break-inside:avoid}.me{background:#dcf8c6;margin-left:60px}.t{color:#666;font-size:11px}</style><h1>Discussion avec " + esc(conv.name) + "</h1><p class=t>Exportee le " + esc(new Date().toLocaleString("fr-FR")) + " depuis PingChat. Document confidentiel.</p>";
+      let h = "<!doctype html><meta charset=utf-8><title>" + esc(conv.name) + "</title><style>body{font:14px Arial,sans-serif;max-width:700px;margin:20px auto}h1{font-size:20px}.m{margin:6px 0;padding:6px 10px;border-radius:8px;background:#eee;page-break-inside:avoid}.me{background:#dcf8c6;margin-left:60px}.t{color:#666;font-size:11px}</style><h1>" + esc((wb.pro && wb.pro.brand && wb.pro.brand.name) ? wb.pro.brand.name + " : " : "") + "Discussion avec " + esc(conv.name) + "</h1><p class=t>Exportee le " + esc(new Date().toLocaleString("fr-FR")) + " depuis PingChat. Document confidentiel.</p>";
       list.forEach(function (m) { const ts = m.ts ? new Date(m.ts * 1000).toLocaleString("fr-FR") : ""; const body = m.text || m.caption || (m.type ? "[" + m.type + "]" : "") || (m.media ? "[" + (m.media.name || "media") + "]" : ""); h += "<div class='m" + (m.fromMe ? " me" : "") + "'><div class=t>" + esc(m.fromMe ? "Moi" : conv.name) + " · " + esc(ts) + "</div>" + esc(body).replace(/\n/g, "<br>") + "</div>"; });
       const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([h], { type: "text/html" })); a.download = "discussion-" + String(conv.name).replace(/[^\w-]+/g, "_") + ".html"; document.body.appendChild(a); a.click(); a.remove(); toast("Discussion exportee (" + list.length + " messages)");
     });
@@ -1882,7 +1883,7 @@
   })();
 
   // panneau Cabinet
-  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["agenda", "Agenda"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["vac", "Conge"], ["link", "Lien / QR"], ["backup", "Sauvegarde"], ["share", "Poste partage"]];
+  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["agenda", "Agenda"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["lib", "Fichiers"], ["find", "Recherche"], ["report", "Rapport"], ["vac", "Conge"], ["link", "Lien / QR"], ["backup", "Sauvegarde"], ["share", "Poste partage"]];
   function proOpen(tab, preJid) {
     if (!wb.on) return toast("Les outils cabinet marchent avec WhatsApp Web");
     wb.proPre = preJid || null;
@@ -1990,6 +1991,39 @@
       wbApi("note?jid=" + encodeURIComponent(jid)).then(function (r) { T.value = r.text || ""; meta.textContent = r.at ? "Derniere modification : " + when(r.at) : ""; });
       const sv = el("button", "btn", "Enregistrer la note"); sv.onclick = function () { wbApi("note", { jid: jid, text: T.value }).then(function (r) { toast(r && r.ok ? "Note enregistree" : "Echec"); if (r && r.ok) meta.textContent = r.note.at ? "Derniere modification : " + when(r.note.at) : "Note supprimee"; }); };
       body.appendChild(sv);
+    } else if (t === "lib") {
+      body.appendChild(el("p", "pro-note", "Tes documents types (ordonnance type, consignes avant analyse, plan d'acces...). Un clic = envoi a UN patient que tu choisis, jamais en masse. Ne mets pas de document propre a un patient ici. Stockes en clair sur ce PC."));
+      const sel = chatSelect(wb.proPre); body.appendChild(field("Envoyer a", sel));
+      const list = el("div", "pro-list"); body.appendChild(list);
+      const fi = document.createElement("input"); fi.type = "file"; fi.className = "hidden";
+      fi.onchange = function () { const f = fi.files[0]; if (!f) return; if (f.size > 20 * 1024 * 1024) return toast("20 Mo max"); const rd = new FileReader(); rd.onload = function () { const mm = /^data:([^;,]*)[^,]*;base64,(.*)$/.exec(String(rd.result)); if (!mm) return toast("Fichier illisible"); wbApi("lib-add", { name: f.name, mime: f.type || mm[1], data: mm[2] }).then(function (r) { toast(r && r.ok ? "Fichier ajoute" : "Echec : " + ((r && r.error) || "")); proTab("lib"); }); }; rd.readAsDataURL(f); };
+      const add = el("button", "btn", "+ Ajouter un fichier"); add.onclick = function () { fi.click(); }; body.appendChild(add); body.appendChild(fi);
+      wbApi("library").then(function (r) { (r.items || []).forEach(function (f) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", f.name)); tx.appendChild(el("small", "", Math.round(f.size / 1024) + " Ko")); row.appendChild(tx);
+        const sd = el("button", "btn secondary", "Envoyer"); sd.onclick = function () { if (!sel.value) return toast("Choisis un patient"); const nm = sel.options[sel.selectedIndex].text; if (!confirm("Envoyer « " + f.name + " » a " + nm + " ?")) return; wbApi("lib-send", { jid: sel.value, id: f.id }).then(function (x) { toast(x && x.ok ? "Fichier envoye" : "Echec : " + ((x && x.error) || "")); }); };
+        const dl = el("button", "btn secondary", "✕"); dl.onclick = function () { if (confirm("Supprimer " + f.name + " de la bibliotheque ?")) wbApi("lib-del", { id: f.id }).then(function () { proTab("lib"); }); };
+        row.appendChild(sd); row.appendChild(dl); list.appendChild(row); }); if (!(r.items || []).length) list.appendChild(el("div", "list-empty", "Bibliotheque vide")); });
+    } else if (t === "find") {
+      body.appendChild(el("p", "pro-note", "Cherche dans les messages de CE compte, par mot, par nom de contact et/ou par dates."));
+      const q = inp("text", "", "Mot ou phrase"), nm = inp("text", "", "Nom ou numero du contact"), f1 = inp("date", ""), f2 = inp("date", "");
+      body.appendChild(field("Mot", q)); body.appendChild(field("Contact", nm)); body.appendChild(field("Du", f1)); body.appendChild(field("Au", f2));
+      const out = el("div", "pro-list");
+      const go = el("button", "btn", "Chercher"); go.onclick = function () { out.innerHTML = ""; wbApi("search?q=" + encodeURIComponent(q.value) + "&name=" + encodeURIComponent(nm.value) + "&from=" + f1.value + "&to=" + f2.value).then(function (r) { const items = (r && r.items) || []; if (!items.length) { out.appendChild(el("div", "list-empty", "Aucun resultat")); return; } items.forEach(function (m) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", (m.name || "") + " · " + when(m.ts * 1000))); tx.appendChild(el("small", "", String(m.text).slice(0, 120))); row.appendChild(tx); const op = el("button", "btn secondary", "Ouvrir"); op.onclick = function () { $("pro-overlay").classList.add("hidden"); const c = getConv("x" + m.jid); if (c) openConversation(c.id); else toast("Discussion introuvable"); }; row.appendChild(op); out.appendChild(row); }); if (items.length >= 80) out.appendChild(el("p", "pro-note", "80 premiers resultats : precise ta recherche.")); }); };
+      body.appendChild(go); body.appendChild(out);
+    } else if (t === "report") {
+      body.appendChild(el("p", "pro-note", "Resume des 7 derniers jours de CE compte, calcule en local. Tu peux le copier ou l'imprimer (rien n'est envoye)."));
+      const nm = inp("text", (P.brand && P.brand.name) || "", "Nom du cabinet"); const svn = el("button", "btn secondary", "Enregistrer le nom"); svn.onclick = function () { saveKey("brand", { name: nm.value }, "Nom enregistre"); };
+      body.appendChild(field("Nom du cabinet (en-tete du rapport et des exports)", nm)); body.appendChild(svn);
+      const box = el("pre", "pro-note"); box.style.whiteSpace = "pre-wrap"; body.appendChild(box);
+      wbApi("dashboard").then(function (d) {
+        if (!d || !d.ok) { box.textContent = "Rapport indisponible"; return; }
+        const tin = d.days.reduce(function (a, x) { return a + x.in; }, 0), tout = d.days.reduce(function (a, x) { return a + x.out; }, 0), W = d.week;
+        const d1 = new Date(d.days[0].t).toLocaleDateString("fr-FR"), d2 = new Date(d.days[6].t).toLocaleDateString("fr-FR");
+        const txt = ((P.brand && P.brand.name) ? P.brand.name + "\n" : "") + "Rapport hebdomadaire " + d1 + " - " + d2 + " (" + accNameById(wb.acc) + ")\n\nMessages recus : " + tin + "\nMessages envoyes : " + tout + "\nRappels de rendez-vous envoyes : " + W.reminded + "\nConfirmes : " + W.confirmed + "\nAnnules : " + W.cancelled + "\nSans reponse : " + W.noReply + "\nDiscussions sans reponse de ta part (7 j) : " + d.unansweredCount + "\nMessages non lus : " + d.unreadTotal + "\nMessages programmes en attente : " + d.sched.pending + " (manques : " + d.sched.missed + ")";
+        box.textContent = txt;
+        const bar = el("div", "pro-bar"); const cp = el("button", "btn", "Copier"); cp.onclick = function () { (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast("Copie"); }, function () { toast("Copie impossible : selectionne le texte"); }); };
+        const pr = el("button", "btn secondary", "Telecharger (HTML imprimable)"); pr.onclick = function () { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["<!doctype html><meta charset=utf-8><title>Rapport</title><pre style='font:15px Arial;white-space:pre-wrap;max-width:700px;margin:30px auto'>" + txt.replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }) + "</pre>"], { type: "text/html" })); a.download = "rapport-hebdo.html"; document.body.appendChild(a); a.click(); a.remove(); };
+        bar.appendChild(cp); bar.appendChild(pr); body.appendChild(bar);
+      });
     } else if (t === "vac") {
       const V = P.vacation || { on: false, until: "", text: "" };
       body.appendChild(el("p", "pro-note", "Mode conge : pendant cette periode, la 1re fois qu'un patient t'ecrit il recoit ce message (une seule fois par contact et par conge, groupes ignores). Il se coupe tout seul apres la date de retour. Marche seulement quand PingChat est ouvert et connecte."));

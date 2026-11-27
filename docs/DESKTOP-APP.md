@@ -66,3 +66,8 @@ Rendez-vous : correction de la detection des reponses (l'horloge du telephone n'
 - Cabinet > Conge : reponse automatique avec date de retour, une fois par contact et par conge, s'arrete seule apres la date.
 - Cabinet > Lien / QR : lien wa.me du compte (message pre-rempli facultatif) et QR enregistrable.
 - Chat > Exporter la discussion : fichier HTML imprimable (Ctrl+P > PDF). Contient des donnees patient en clair.
+
+## v1.6.2
+- Cabinet > Fichiers : bibliotheque de documents types (max 50, 20 Mo), envoi d'un fichier a UN patient apres confirmation. Stockee dans `accounts\<id>\library`. Pas dans la sauvegarde (seulement la liste).
+- Cabinet > Recherche : mot, nom/numero du contact, dates.
+- Cabinet > Rapport : resume 7 jours copiable/imprimable, nom du cabinet (en-tete du rapport et des exports).

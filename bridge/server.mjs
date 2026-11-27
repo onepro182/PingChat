@@ -486,13 +486,19 @@ function createAccount(id, dir) {
     for (const [jid, list] of msgs) for (const m of list) if (m.star && !m.deleted && !m.hidden) out.push({ jid, name: nameOf(jid), id: m.id, ts: m.ts, fromMe: m.fromMe, text: m.text });
     return out.sort((a, b) => b.ts - a.ts).slice(0, 200);
   }
-  function search(q) {
-    q = String(q || '').toLowerCase().trim(); if (q.length < 2) return [];
+  function search(q, o = {}) {
+    q = String(q || '').toLowerCase().trim(); const nm = String(o.name || '').toLowerCase().trim();
+    const from = o.from ? new Date(o.from + 'T00:00:00').getTime() / 1000 : 0, to = o.to ? new Date(o.to + 'T23:59:59').getTime() / 1000 : Infinity;
+    const filtered = !!(nm || o.from || o.to);
+    if (q.length < 2 && !filtered) return [];
     const out = [];
-    for (const [jid, list] of msgs) for (const m of list) {
-      if (m.deleted || m.hidden) continue;
-      const hay = ((m.text || '') + ' ' + (m.caption || '') + ' ' + (m.media?.name || '')).toLowerCase();
-      if (hay.includes(q)) out.push({ jid, id: m.id, ts: m.ts, text: m.text || m.caption || m.media?.name || '' });
+    for (const [jid, list] of msgs) {
+      if (nm && !nameOf(jid).toLowerCase().includes(nm) && !jid.includes(nm.replace(/\D/g, '') || '@@')) continue;
+      for (const m of list) {
+        if (m.deleted || m.hidden || m.ts < from || m.ts > to) continue;
+        const hay = ((m.text || '') + ' ' + (m.caption || '') + ' ' + (m.media?.name || '')).toLowerCase();
+        if (!q || hay.includes(q)) out.push({ jid, id: m.id, ts: m.ts, text: m.text || m.caption || m.media?.name || '', name: nameOf(jid) });
+      }
     }
     return out.sort((a, b) => b.ts - a.ts).slice(0, 80);
   }
@@ -657,7 +663,7 @@ function createAccount(id, dir) {
   const isOpenAt = (ms) => { const d = new Date(ms); const day = pro.auto.days.find((x) => x.d === d.getDay()); if (!day || !day.on) return false; const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); return hm >= day.start && hm < day.end; };
   // cle de l'absence en cours = instant (arrondi 15 min) ou le cabinet a ferme pour la derniere fois
   const absenceKey = (now) => { for (let t = now, i = 0; i < 8 * 96; i++, t -= 15 * 60000) if (isOpenAt(t)) return String(Math.floor(t / 900000)); return 'long'; };
-  const proPublic = () => ({ quick: pro.quick, auto: { on: pro.auto.on, text: pro.auto.text, days: pro.auto.days }, labels: pro.labels, remind: pro.remind, vacation: { on: pro.vacation.on, until: pro.vacation.until, text: pro.vacation.text }, open: isOpenAt(Date.now()) });
+  const proPublic = () => ({ quick: pro.quick, auto: { on: pro.auto.on, text: pro.auto.text, days: pro.auto.days }, labels: pro.labels, remind: pro.remind, brand: pro.brand, vacation: { on: pro.vacation.on, until: pro.vacation.until, text: pro.vacation.text }, open: isOpenAt(Date.now()) });
   function proSet(key, v) {
     if (key === 'quick') pro.quick = (Array.isArray(v) ? v : []).slice(0, 100).map((q) => ({ k: str(q.k, 30).replace(/^\//, '').replace(/\s+/g, '').toLowerCase(), text: str(q.text, 2000) })).filter((q) => q.k && q.text);
     else if (key === 'auto') {
@@ -668,6 +674,7 @@ function createAccount(id, dir) {
       pro.labels = (Array.isArray(v) ? v : []).slice(0, 30).map((l) => ({ id: str(l.id, 20).replace(/[^\w-]/g, '') || 'l' + Math.random().toString(36).slice(2, 7), name: str(l.name, 30), color: /^#[0-9a-fA-F]{6}$/.test(l.color) ? l.color : '#7c5cd6' })).filter((l) => l.name);
       const ok = new Set(pro.labels.map((l) => l.id)); for (const j of Object.keys(pro.tagged)) { pro.tagged[j] = pro.tagged[j].filter((x) => ok.has(x)); if (!pro.tagged[j].length) delete pro.tagged[j]; }
     } else if (key === 'remind') { pro.remind.hours = Math.min(168, Math.max(1, Number(v.hours) || 24)); pro.remind.text = str(v.text, 600) || pro.remind.text; pro.remind.hours2 = Math.min(pro.remind.hours - 1, Math.max(0, Number(v.hours2) || 0)); if (pro.remind.hours2 < 1) pro.remind.hours2 = 0; }
+    else if (key === 'brand') pro.brand = { name: str(v.name, 60) };
     else if (key === 'vacation') { const u = /^\d{4}-\d{2}-\d{2}$/.test(String(v.until || '')) ? String(v.until) : ''; pro.vacation = { on: !!v.on && !!u, until: u, text: str(v.text, 1000) || pro.vacation.text }; pro.vacation.notified = {}; }
     else throw Object.assign(new Error('reglage inconnu'), { code: 400 });
     proSave(); emit('pro', {}); return proPublic();
@@ -716,6 +723,25 @@ function createAccount(id, dir) {
     const link = 'https://wa.me/' + num + (text ? '?text=' + encodeURIComponent(str(text, 500)) : '');
     return { link, qr: await QRCode.toDataURL(link, { margin: 2, scale: 8 }) };
   }
+  // ---------- v1.6.2 : bibliotheque de fichiers (ordonnances types, consignes), identite du cabinet ----------
+  const LIB_DIR = path.join(dir, 'library');
+  pro.library = Array.isArray(pro.library) ? pro.library : [];
+  pro.brand = { name: '', ...(pro.brand || {}) };
+  function libAdd(o) {
+    const buf = Buffer.from(String(o.data || ''), 'base64'); const name = str(o.name, 120).replace(/[\\/:*?"<>|]/g, '_') || 'fichier';
+    if (!buf.length || buf.length > 20 * 1024 * 1024) throw Object.assign(new Error('Fichier vide ou trop gros (20 Mo max)'), { code: 400 });
+    if (pro.library.length >= 50) throw Object.assign(new Error('Bibliotheque pleine (50 fichiers)'), { code: 400 });
+    fs.mkdirSync(LIB_DIR, { recursive: true });
+    const id = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    fs.writeFileSync(path.join(LIB_DIR, id + '.bin'), buf);
+    const it = { id, name, mime: str(o.mime, 100) || 'application/octet-stream', size: buf.length, at: Date.now() }; pro.library.push(it); proSave(); emit('pro', {}); return it;
+  }
+  function libDel(id) { const it = pro.library.find((x) => x.id === id); if (!it) return; try { fs.unlinkSync(path.join(LIB_DIR, it.id + '.bin')); } catch {} pro.library = pro.library.filter((x) => x.id !== id); proSave(); emit('pro', {}); }
+  async function libSend(rawJid, id) {
+    const it = pro.library.find((x) => x.id === id); if (!it) throw Object.assign(new Error('fichier introuvable'), { code: 404 });
+    const data = fs.readFileSync(path.join(LIB_DIR, it.id + '.bin')).toString('base64');
+    return sendMedia(rawJid, { kind: it.mime.startsWith('image/') ? 'image' : 'document', mime: it.mime, name: it.name, data });
+  }
   const BK_DIR = path.join(dir, 'backups');
   function backupPayload() {
     return JSON.stringify({ app: 'pingchat', v: 1, at: Date.now(), pro, store: { chats: [...chats], msgs: [...msgs], contacts: [...contacts], notifies: [...notifies], lidPn: [...lidPn] } });
@@ -763,6 +789,7 @@ function createAccount(id, dir) {
     pro = { ...proDefault(), ...o.pro, auto: { ...proDefault().auto, ...(o.pro.auto || {}) }, remind: { ...proDefault().remind, ...(o.pro.remind || {}) } };
     pro.log = Array.isArray(pro.log) ? pro.log : []; pro.notes = pro.notes && typeof pro.notes === 'object' ? pro.notes : {};
     pro.vacation = { on: false, until: '', text: pro.vacation?.text || '', ...(pro.vacation || {}), notified: {} }; pro.remind.hours2 = Number(pro.remind.hours2) || 0;
+    pro.library = (Array.isArray(pro.library) ? pro.library : []).filter((x) => fs.existsSync(path.join(LIB_DIR, x.id + '.bin'))); pro.brand = { name: '', ...(pro.brand || {}) };
     try { fs.writeFileSync(PRO_FILE, JSON.stringify(pro)); fs.writeFileSync(STORE_FILE, JSON.stringify({ chats: [...chats], msgs: [...msgs], contacts: [...contacts], notifies: [...notifies], lidPn: [...lidPn] })); } catch {}
     emit('chats', {}); emit('pro', {}); return { chats: chats.size };
   }
@@ -903,7 +930,7 @@ function createAccount(id, dir) {
     chatList: () => [...chats.keys()].map(chatView).filter((c) => c.ts || c.last).sort((a, b) => b.ts - a.ts),
     messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); if (!isGroup(jid) && sock && state.status === 'open') sock.presenceSubscribe(jid).catch(() => {}); return (msgs.get(jid) || []).filter((m) => !m.hidden); },
     deleteForAll, deleteForMe, editMsg, forward, star, starred, search, groupInfo, typing, avatar,
-    proPublic, proSet, waLink, apptSet, noteGet, noteSet, noteJids: () => Object.keys(pro.notes), backupMake, backupRestoreText, backupRestoreFile, backupList, backupAutoTick, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), proLog: () => pro.log.slice().reverse(), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, dashboard, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
+    proPublic, proSet, waLink, libAdd, libDel, libSend, libList: () => pro.library, brandGet: () => pro.brand, apptSet, noteGet, noteSet, noteJids: () => Object.keys(pro.notes), backupMake, backupRestoreText, backupRestoreFile, backupList, backupAutoTick, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), proLog: () => pro.log.slice().reverse(), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, dashboard, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
     send, sendMedia, react, rejectCall, mediaFile,
     logout: async () => { try { await sock?.logout(); } catch {} },
   };
@@ -1134,12 +1161,18 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/sched') { const a = A(); return json(res, 200, { ok: true, items: a ? a.schedList() : [] }); }
     if (p === '/api/note' && req.method === 'GET') { const a = A(); return json(res, 200, { ok: true, ...(a ? a.noteGet(url.searchParams.get('jid') || '') : {}) }); }
     if (p === '/api/wame') { const a = A(); if (!a) return json(res, 404, { ok: false }); try { return json(res, 200, { ok: true, ...(await a.waLink(url.searchParams.get('text') || '')) }); } catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); } }
+    if (p === '/api/library') { const a = A(); return json(res, 200, { ok: true, items: a ? a.libList() : [] }); }
     if (p === '/api/notes') { const a = A(); return json(res, 200, { ok: true, jids: a ? a.noteJids() : [] }); }
     if (p === '/api/backups') { const a = A(); return json(res, 200, { ok: true, items: a ? a.backupList() : [] }); }
     if (p === '/api/backup' && req.method === 'POST') {
       const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
       const txt = a.backupMake(b.pass ? String(b.pass) : '');
       res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="pingchat-sauvegarde-' + new Date().toISOString().slice(0, 10) + '.json"' }); return res.end(txt);
+    }
+    if (p === '/api/lib-add' && req.method === 'POST') {
+      let b; try { b = await readBody(req, 30 * 1024 * 1024); } catch { return json(res, 413, { ok: false, error: 'fichier trop gros' }); }
+      const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+      try { return json(res, 200, { ok: true, item: a.libAdd(b) }); } catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); }
     }
     if (p === '/api/restore' && req.method === 'POST') {
       let b; try { b = await readBody(req, 300 * 1024 * 1024); } catch { return json(res, 413, { ok: false, error: 'fichier trop gros' }); }
@@ -1148,22 +1181,24 @@ const server = http.createServer(async (req, res) => {
       catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); }
     }
     if (p === '/api/appts') { const a = A(); return json(res, 200, { ok: true, items: a ? a.apptList() : [] }); }
-    if (req.method === 'POST' && ['/api/pro-set', '/api/tag-chat', '/api/sched-add', '/api/sched-del', '/api/appt-add', '/api/appt-del', '/api/appt-set', '/api/note'].includes(p)) {
+    if (req.method === 'POST' && ['/api/pro-set', '/api/tag-chat', '/api/sched-add', '/api/sched-del', '/api/appt-add', '/api/appt-del', '/api/appt-set', '/api/note', '/api/lib-del', '/api/lib-send'].includes(p)) {
       const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
       const w = async (fn) => { try { return json(res, 200, { ok: true, ...(await fn()) }); } catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); } };
       const jidOk = /^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/.test(String(b.jid || ''));
       if (p === '/api/pro-set') return w(() => ({ pro: a.proSet(String(b.key || ''), b.value || {}) }));
       if (p === '/api/sched-del') return w(() => { a.schedDel(String(b.id || '')); return {}; });
+      if (p === '/api/lib-del') return w(() => { a.libDel(String(b.id || '')); return {}; });
       if (p === '/api/appt-set') return w(() => ({ item: a.apptSet(String(b.id || ''), String(b.status || '')) }));
       if (p === '/api/appt-del') return w(() => { a.apptDel(String(b.id || '')); return {}; });
       if (!jidOk) return json(res, 400, { ok: false, error: 'jid invalide' });
+      if (p === '/api/lib-send') return w(async () => ({ id: await a.libSend(b.jid, String(b.id || '')) }));
       if (p === '/api/note') return w(() => ({ note: a.noteSet(b.jid, b.text) }));
       if (p === '/api/tag-chat') return w(() => a.tagChat(b.jid, String(b.tag || ''), !!b.on));
       if (p === '/api/sched-add') return w(() => ({ item: a.schedAdd(b.jid, b.text, b.at) }));
       if (p === '/api/appt-add') return w(() => ({ item: a.apptAdd(b.jid, b.at, b.note) }));
     }
     if (p === '/api/starred') { const a = A(); return json(res, 200, { ok: true, items: a ? a.starred() : [] }); }
-    if (p === '/api/search') { const a = A(); return json(res, 200, { ok: true, items: a ? a.search(url.searchParams.get('q')) : [] }); }
+    if (p === '/api/search') { const a = A(); return json(res, 200, { ok: true, items: a ? a.search(url.searchParams.get('q'), { name: url.searchParams.get('name'), from: url.searchParams.get('from'), to: url.searchParams.get('to') }) : [] }); }
     if (p === '/api/group') { const a = A(); if (!a) return json(res, 404, { ok: false }); return wrapA(async () => ({ group: await a.groupInfo(url.searchParams.get('jid') || '') })); }
     if (p === '/api/avatar') {
       const a = A(); const f = a ? a.avatar(url.searchParams.get('jid') || '') : null;
