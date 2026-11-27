@@ -703,14 +703,14 @@ mark.hl.current { background: #ff9f1c; }
 
 /* ---------- Suppression dans la liste ---------- */
 .chat-item { position: relative; }
+.chat-item-top { padding-right: 30px; }
 .item-del {
-  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-  width: 32px; height: 32px; border: none; border-radius: 50%; cursor: pointer;
-  background: var(--bg-panel); box-shadow: var(--shadow); display: none; align-items: center; justify-content: center;
+  position: absolute; right: 6px; top: 8px; width: 28px; height: 28px; border: none; border-radius: 50%;
+  cursor: pointer; background: transparent; display: flex; align-items: center; justify-content: center; opacity: .55;
 }
-.item-del svg { width: 18px; height: 18px; fill: #ea4b4b; }
-.chat-item:hover .item-del, .chat-item:focus-within .item-del { display: flex; }
-@media (hover: none) { .item-del { display: flex; width: 28px; height: 28px; top: 8px; right: 6px; transform: none; box-shadow: none; background: transparent; } .item-del svg { fill: var(--text-secondary); } .chat-item-top { padding-right: 30px; } }
+.item-del svg { width: 17px; height: 17px; fill: var(--text-secondary); }
+.item-del:hover, .item-del:focus-visible { opacity: 1; background: var(--hover-icon); }
+.item-del:hover svg { fill: #ea4b4b; }
 
 /* ---------- Reactions ---------- */
 .react-row { display: flex; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
