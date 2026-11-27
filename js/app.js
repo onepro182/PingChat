@@ -165,6 +165,7 @@
     document.title = (n ? "(" + n + ") " : "") + "PingChat";
   }
   function notifyIncoming(conv, text, accName, accId) {
+    if (conv && conv.muted) return;
     playSound("in");
     const title = accName ? conv.name + " · " + accName : conv.name;
     if (settings.notif && document.hidden && "Notification" in window && Notification.permission === "granted") {
@@ -216,6 +217,9 @@
     if (activeId) {
       const c = getConv(activeId);
       $("chat-menu").querySelector('[data-act="pin"]').textContent = c.pinned ? "Desepingler la discussion" : "Epingler la discussion";
+      $("chat-menu").querySelector('[data-act="mute"]').textContent = c.muted ? "Reactiver les notifications" : "Mettre en sourdine";
+      $("chat-menu").querySelector('[data-act="archive"]').textContent = c.archived ? "Desarchiver la discussion" : "Archiver la discussion";
+      ["media", "location", "mute", "archive"].forEach(function (k) { $("chat-menu").querySelector('[data-act="' + k + '"]').classList.toggle("hidden", !c.wb); });
       $("chat-menu").classList.toggle("hidden", !open);
     }
   });
@@ -255,6 +259,7 @@
       CONVERSATIONS.forEach(function (c) { c.unread = 0; });
       save(); renderChatList(); toast("Toutes les discussions sont lues");
     }
+    if (act === "newgroup") { if (typeof wbNewGroup === "function" && wb.on) wbNewGroup(); else toast("Disponible avec WhatsApp Web"); return; }
     if (act === "reset") {
       if (!confirm("Reinitialiser toutes les discussions ?")) return;
       localStorage.removeItem(STORE_KEY);
@@ -267,6 +272,11 @@
     const conv = getConv(activeId);
     if (!conv) return;
     if (act === "info") { if (conv.wb) wbInfo(conv); else toast("Infos disponibles avec WhatsApp Web"); return; }
+    if (act === "media") return wbGallery(conv);
+    if (act === "location") return wbLocation(conv);
+    if (act === "archive") return wbFlag(conv, { archive: !conv.archived }, conv.archived ? "Discussion desarchivee" : "Discussion archivee");
+    if (act === "mute") return conv.muted ? wbFlag(conv, { mute: 0 }, "Notifications reactivees") : openList("Mettre en sourdine pendant...", [{ title: "8 heures", onClick: function () { wbFlag(conv, { mute: 8 }, "Sourdine 8 h"); } }, { title: "1 semaine", onClick: function () { wbFlag(conv, { mute: 168 }, "Sourdine 1 semaine"); } }, { title: "Toujours", onClick: function () { wbFlag(conv, { mute: -1 }, "Sourdine activee"); } }], false);
+    if (act === "pin" && conv.wb) return wbFlag(conv, { pin: !conv.pinned }, conv.pinned ? "Discussion desepinglee" : "Discussion epinglee");
     if (act === "pin") { conv.pinned = !conv.pinned; save(); renderChatList(); toast(conv.pinned ? "Discussion epinglee" : "Discussion desepinglee"); }
     if (act === "clear") {
       if (!confirm("Vider cette discussion ?")) return;
@@ -290,6 +300,7 @@
     const list = CONVERSATIONS.filter(function (c) {
       if (listFilter === "unread" && !c.unread) return false;
       if (listFilter === "pinned" && !c.pinned) return false;
+      if (listFilter === "archived" ? !c.archived : (c.archived && !q)) return false;
       if (!q) return true;
       if (typeof wb !== "undefined" && wb.on && c.jid && wb.hits[c.jid]) return true;
       return c.name.toLowerCase().includes(q) ||
@@ -321,7 +332,7 @@
           '<div class="chat-item-top"><span class="chat-item-name"></span>' +
           '<span class="chat-item-time' + (conv.unread ? " unread" : "") + '">' + (last ? last.time : (conv.timeLabel || "")) + "</span></div>" +
           '<div class="chat-item-bottom"><span class="chat-item-preview">' + previewTicks +
-          '<span class="preview-text"></span></span><span style="display:flex;gap:6px;align-items:center">' + pin + badge + "</span></div>" +
+          '<span class="preview-text"></span></span><span style="display:flex;gap:6px;align-items:center">' + (conv.muted ? '<span class="mute-icon" title="Sourdine">🔕</span>' : "") + pin + badge + "</span></div>" +
         "</div>";
       li.querySelector(".chat-item-name").textContent = conv.name;
       li.querySelector(".preview-text").textContent = last ? previewOf(last) : (conv.preview || "");
@@ -530,6 +541,12 @@
         v.className = "msg-img"; v.controls = true; v.preload = "metadata"; v.src = msg.src; if (msg.thumb) v.poster = msg.thumb;
         bubble.appendChild(v); bubble.classList.add("has-img");
         if (msg.text) { const cap = document.createElement("span"); cap.className = "msg-caption"; cap.textContent = msg.text; cap.dataset.search = "1"; bubble.appendChild(cap); }
+      } else if (msg.loc) {
+        const a = document.createElement("a"); a.className = "loc-card"; a.target = "_blank"; a.rel = "noopener";
+        a.href = "https://www.openstreetmap.org/?mlat=" + msg.loc.lat + "&mlon=" + msg.loc.lng + "#map=16/" + msg.loc.lat + "/" + msg.loc.lng;
+        const ic = document.createElement("span"); ic.textContent = "📍"; ic.style.fontSize = "26px";
+        const tx = document.createElement("div"); const b = document.createElement("b"); b.textContent = msg.loc.name || "Position"; const sm = document.createElement("small"); sm.textContent = msg.loc.lat.toFixed(5) + ", " + msg.loc.lng.toFixed(5) + " · ouvrir la carte";
+        tx.appendChild(b); tx.appendChild(sm); a.appendChild(ic); a.appendChild(tx); bubble.appendChild(a);
       } else if (msg.type === "sticker") {
         const img = document.createElement("img");
         img.className = "msg-sticker"; img.src = msg.src; img.alt = "sticker";
@@ -1144,7 +1161,7 @@
     const id = "x" + c.jid;
     AVATAR_COLORS[id] = wbColor(c.jid);
     return { id: id, wb: true, live: true, jid: c.jid, name: c.name || c.phone || c.jid.split("@")[0], phone: c.phone || "", status: c.group ? "groupe" : (c.phone || ""),
-      unread: c.unread || 0, ts: c.ts || 0, preview: c.last || "", timeLabel: c.ts ? hhmm(c.ts) : "", loaded: false, days: [{ date: "Aujourd'hui", messages: [] }] };
+      unread: c.unread || 0, ts: c.ts || 0, preview: c.last || "", timeLabel: c.ts ? hhmm(c.ts) : "", loaded: false, pinned: !!c.pinned, archived: !!c.archived, muted: !!c.muted, days: [{ date: "Aujourd'hui", messages: [] }] };
   }
   function wbRefreshChats() {
     return wbApi("chats").then(function (r) {
@@ -1162,8 +1179,9 @@
         const ex = getConv("x" + c.jid);
         if (!ex) { CONVERSATIONS.push(wbMakeConv(c)); return; }
         ex.name = c.name || ex.name; ex.unread = activeId === ex.id ? 0 : c.unread; ex.ts = c.ts; ex.preview = c.last; ex.timeLabel = c.ts ? hhmm(c.ts) : "";
+        ex.pinned = !!c.pinned; ex.archived = !!c.archived; ex.muted = !!c.muted;
       });
-      renderChatList();
+      renderChatList(); wbLoadStatuses();
     });
   }
   function wbSetReactions(o, r) {
@@ -1176,6 +1194,7 @@
     if (m.edited) o.edited = true;
     if (m.star) o.star = true;
     if (m.sj) o.sj = m.sj;
+    if (m.loc) o.loc = m.loc;
     if (m.type === "call") o.type = "call";
     else if (m.type && m.media) {
       const f = m.media.file ? "api/media?acc=" + encodeURIComponent(wb.acc) + "&f=" + encodeURIComponent(m.media.file) : "";
@@ -1343,7 +1362,8 @@
     $("rr-state").textContent = wb.settings.readReceipts ? "on" : "off";
     $("typing-state").textContent = wb.settings.typing ? "on" : "off";
   }
-  function openList(title, items, filterable, emptyText) {
+  function openList(title, items, filterable, emptyText, opts) {
+    opts = opts || {};
     const ov = $("list-overlay"), box = $("list-box"), inp = $("list-filter");
     $("list-title").textContent = title; inp.classList.toggle("hidden", !filterable); inp.value = "";
     function close() { ov.classList.add("hidden"); }
@@ -1357,10 +1377,13 @@
         const b = document.createElement("b"); b.textContent = i.title; const sm = document.createElement("small"); sm.textContent = i.sub || "";
         t.appendChild(b); t.appendChild(sm); row.appendChild(t);
         if (i.badge) { const bd = document.createElement("span"); bd.className = "list-badge"; bd.textContent = i.badge; row.appendChild(bd); }
-        if (i.onClick) { row.style.cursor = "pointer"; row.onclick = function () { close(); i.onClick(); }; }
+        if (opts.multi) { row.style.cursor = "pointer"; row.classList.toggle("sel", !!i.sel); row.onclick = function () { i.sel = !i.sel; row.classList.toggle("sel", i.sel); }; }
+        else if (i.onClick) { row.style.cursor = "pointer"; row.onclick = function () { close(); i.onClick(); }; }
         box.appendChild(row);
       });
     }
+    const okb = $("list-ok"); okb.classList.toggle("hidden", !opts.multi); okb.textContent = opts.okText || "Valider";
+    okb.onclick = function () { const picked = items.filter(function (x) { return x.sel; }); close(); if (opts.onOk) opts.onOk(picked); };
     inp.oninput = paint; paint(); ov.classList.remove("hidden"); $("list-close").onclick = close;
     if (filterable) setTimeout(function () { inp.focus(); }, 30);
   }
@@ -1385,16 +1408,118 @@
   }
   function wbInfo(conv) {
     if (!/@g\.us$/.test(conv.jid)) {
-      return openList(conv.name, [{ title: "Numero", sub: conv.phone || conv.jid.split("@")[0] }], false);
+      return openList(conv.name, [{ title: "Numero", sub: conv.phone || conv.jid.split("@")[0] }, { title: "Medias, docs et liens", onClick: function () { wbGallery(conv); } }], false);
     }
     wbApi("group?jid=" + encodeURIComponent(conv.jid)).then(function (r) {
       if (!r || !r.ok) return toast("Infos du groupe indisponibles : " + ((r && r.error) || ""));
       const g = r.group;
+      const act = function (body, msg) { return wbApi("group-manage", Object.assign({ jid: conv.jid }, body)).then(function (x) { if (x && x.ok) { toast(msg); if (body.action !== "leave") wbInfo(conv); else { wbRefreshChats(); } } else toast("Impossible : " + ((x && x.error) || "echec")); }); };
       const items = [];
       if (g.desc) items.push({ title: "Description", sub: g.desc });
+      items.push({ title: "Medias, docs et liens", onClick: function () { wbGallery(conv); } });
+      if (g.meAdmin) {
+        items.push({ title: "Renommer le groupe", onClick: function () { askText("Nouveau nom du groupe", "", g.name).then(function (v) { if (v && v.trim()) act({ action: "subject", value: v.trim() }, "Groupe renomme"); }); } });
+        items.push({ title: "Changer la description", onClick: function () { askText("Description du groupe", "", g.desc).then(function (v) { if (v !== null) act({ action: "desc", value: v }, "Description changee"); }); } });
+        items.push({ title: "Ajouter des participants", sub: "numeros avec indicatif, separes par une virgule", onClick: function () { askText("Numeros a ajouter", "+212 6xx xx xx xx, +33 ...").then(function (v) { if (v && v.trim()) act({ action: "add", participants: v.split(/[,;\n]+/) }, "Demande envoyee"); }); } });
+      }
       items.push({ title: g.size + " participants", sub: g.owner ? "Cree par " + g.owner : "" });
-      g.participants.forEach(function (p) { items.push({ title: p.name || p.phone || "Contact", sub: p.name ? p.phone : "", badge: p.admin ? "admin" : "" }); });
+      g.participants.forEach(function (p) {
+        const it = { title: p.name || p.phone || "Contact", sub: p.name ? p.phone : "", badge: p.admin ? "admin" : "" };
+        if (g.meAdmin) it.onClick = function () {
+          openList(it.title, [
+            p.admin ? { title: "Retirer comme admin", onClick: function () { act({ action: "demote", participants: [p.jid] }, "Admin retire"); } } : { title: "Nommer admin", onClick: function () { act({ action: "promote", participants: [p.jid] }, "Nomme admin"); } },
+            { title: "Retirer du groupe", onClick: function () { if (confirm("Retirer " + it.title + " du groupe ?")) act({ action: "remove", participants: [p.jid] }, "Participant retire"); } }
+          ], false);
+        };
+        items.push(it);
+      });
+      items.push({ title: "Quitter le groupe", onClick: function () { if (confirm("Quitter ce groupe ?")) act({ action: "leave" }, "Groupe quitte"); } });
       openList(g.name, items, false);
+    });
+  }
+  function wbNewGroup() {
+    askText("Nom du nouveau groupe", "Ex : Equipe boutique").then(function (name) {
+      if (!name || !name.trim()) return;
+      const items = CONVERSATIONS.filter(function (c) { return c.wb && /@s\.whatsapp\.net$/.test(c.jid); }).map(function (c) { return { title: c.name, sub: c.phone || "", jid: c.jid }; });
+      openList("Participants de \"" + name.trim() + "\"", items, true, "Aucun contact", { multi: true, okText: "Creer le groupe", onOk: function (picked) {
+        if (!picked.length) return toast("Choisis au moins une personne");
+        wbApi("group-create", { name: name.trim(), participants: picked.map(function (x) { return x.jid; }) }).then(function (r) {
+          if (r && r.ok) { toast("Groupe cree"); wbRefreshChats().then(function () { if (getConv("x" + r.jid)) openConversation("x" + r.jid); }); }
+          else toast("Creation impossible : " + ((r && r.error) || "echec"));
+        });
+      } });
+    });
+  }
+  function wbFlag(conv, body, msg) {
+    return wbApi("chat-flag", Object.assign({ jid: conv.jid }, body)).then(function (r) {
+      if (r && r.ok) { const c = r.chat; conv.pinned = !!c.pinned; conv.archived = !!c.archived; conv.muted = !!c.muted; renderChatList(); toast(msg); }
+      else toast("Echec : " + ((r && r.error) || ""));
+    });
+  }
+  function wbGallery(conv) {
+    wbApi("gallery?jid=" + encodeURIComponent(conv.jid)).then(function (r) {
+      if (!r || !r.ok) return toast("Echec");
+      const ov = $("gal-overlay"), box = $("gal-box"); $("gal-title").textContent = conv.name;
+      const furl = function (f) { return "api/media?acc=" + encodeURIComponent(wb.acc) + "&f=" + encodeURIComponent(f); };
+      function tab(t) {
+        Array.prototype.forEach.call(ov.querySelectorAll(".gal-tabs .chip"), function (b) { b.classList.toggle("active", b.dataset.t === t); });
+        box.innerHTML = ""; box.classList.toggle("rows", t !== "media");
+        const list = r[t] || [];
+        if (!list.length) { const e = document.createElement("div"); e.className = "list-empty"; e.textContent = "Rien pour le moment"; box.appendChild(e); return; }
+        list.forEach(function (it) {
+          if (t === "media") {
+            const d = document.createElement("div"); d.className = "gal-cell";
+            const src = it.file ? furl(it.file) : it.thumb;
+            if (it.type === "video" && it.file) { const v = document.createElement("video"); v.src = src; v.preload = "metadata"; if (it.thumb) v.poster = it.thumb; d.appendChild(v); const pl = document.createElement("span"); pl.className = "gal-play"; pl.textContent = "▶"; d.appendChild(pl); }
+            else if (src) { const im = document.createElement("img"); im.src = src; im.alt = ""; d.appendChild(im); }
+            d.onclick = function () { ov.classList.add("hidden"); wb.jump = it.id; if (activeId === conv.id) { jumpTo("w" + it.id); } };
+            box.appendChild(d);
+          } else {
+            const d = document.createElement("div"); d.className = "gal-row";
+            const b = document.createElement("b"); const sm = document.createElement("small");
+            if (t === "docs") { b.textContent = "📄 " + it.name; sm.textContent = (it.size ? Math.max(1, Math.round(it.size / 1024)) + " Ko · " : "") + hhmm(it.ts); d.onclick = function () { if (it.file) { const a = document.createElement("a"); a.href = furl(it.file); a.download = it.name; a.click(); } else toast("Fichier non telecharge"); }; }
+            else { b.textContent = it.url; sm.textContent = hhmm(it.ts); d.onclick = function () { window.open(it.url, "_blank", "noopener"); }; }
+            d.appendChild(b); d.appendChild(sm); box.appendChild(d);
+          }
+        });
+      }
+      ov.querySelectorAll(".gal-tabs .chip").forEach(function (b) { b.onclick = function () { tab(b.dataset.t); }; });
+      $("gal-close").onclick = function () { ov.classList.add("hidden"); };
+      tab("media"); ov.classList.remove("hidden");
+    });
+  }
+  function wbSendLoc(conv, lat, lng, name) {
+    wbApi("location", { jid: conv.jid, lat: lat, lng: lng, name: name || "" }).then(function (r) { if (r && r.ok) { playSound("send"); toast("Position envoyee"); } else toast("Position non envoyee : " + ((r && r.error) || "")); });
+  }
+  function wbLocation(conv) {
+    function manual() {
+      askText("Position : latitude, longitude (ou lien Google Maps)", "34.0331, -4.9998").then(function (v) {
+        if (!v) return;
+        const m = /(-?\d{1,2}(?:\.\d+)?)\s*[,;]\s*(-?\d{1,3}(?:\.\d+)?)/.exec(v) || /@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(v);
+        if (!m) return toast("Je n'ai pas compris cette position");
+        wbSendLoc(conv, Number(m[1]), Number(m[2]), "");
+      });
+    }
+    if (!navigator.geolocation) return manual();
+    toast("Recherche de ta position...");
+    navigator.geolocation.getCurrentPosition(function (p) { wbSendLoc(conv, p.coords.latitude, p.coords.longitude, ""); }, function () { manual(); }, { timeout: 6000 });
+  }
+  // statuts WhatsApp reels
+  const seenKey = function () { return "pingchat.stseen." + wb.acc; };
+  function wbLoadStatuses() {
+    wbApi("statuses").then(function (r) {
+      if (!r || !r.ok) return;
+      let seen = {}; try { seen = JSON.parse(localStorage.getItem(seenKey()) || "{}"); } catch (e) {}
+      const out = [];
+      r.statuses.forEach(function (g) {
+        g.items.forEach(function (s) {
+          const o = { id: s.id, owner: g.fromMe ? "me" : g.who, name: g.fromMe ? "Moi" : (g.name || "Contact"), ts: s.ts * 1000, seen: !!seen[s.id], wbs: true };
+          if (s.type === "text") { o.kind = "text"; o.text = s.text; o.bg = s.bg || "#312e81"; }
+          else { o.kind = "image"; o.vid = s.type === "video"; o.text = s.caption || ""; o.src = s.media && s.media.file ? "api/media?acc=" + encodeURIComponent(wb.acc) + "&f=" + encodeURIComponent(s.media.file) : (s.media && s.media.thumb) || ""; }
+          out.push(o);
+        });
+      });
+      stories = out; renderStories();
     });
   }
   let callInfo = null;
@@ -1458,8 +1583,10 @@
         const c = JSON.parse(e.data); if (!mine(c)) return; let ex = getConv("x" + c.jid);
         if (!ex) { ex = wbMakeConv(c); CONVERSATIONS.push(ex); }
         ex.name = c.name || ex.name; ex.ts = c.ts; ex.preview = c.last; ex.timeLabel = c.ts ? hhmm(c.ts) : "";
+        ex.pinned = !!c.pinned; ex.archived = !!c.archived; ex.muted = !!c.muted;
         ex.unread = activeId === ex.id ? 0 : c.unread; renderChatList();
       });
+      es.addEventListener("statuses", function (e) { const d = JSON.parse(e.data); if (mine(d)) wbLoadStatuses(); });
       es.addEventListener("message", function (e) {
         const d = JSON.parse(e.data);
         if (!mine(d)) { if (!d.msg.fromMe) notifyIncoming({ id: "", name: d.name || "Message" }, d.msg.text, accNameById(d.acc), d.acc); return; }
@@ -1509,6 +1636,7 @@
     stories = stories.filter(function (s) { return Date.now() - s.ts < DAY; });
   })();
   function saveStories() {
+    if (typeof wb !== "undefined" && wb.on) return;
     try { localStorage.setItem(STORY_KEY, JSON.stringify(stories.filter(function (s) { return s.kind === "text"; }))); } catch (e) {}
   }
   function storiesOf(owner) { return stories.filter(function (s) { return s.owner === owner && Date.now() - s.ts < DAY; }); }
@@ -1547,11 +1675,11 @@
     bar.appendChild(bubbleFor("me", "Mon statut", "#ff6b57", mine.length ? "seen" : "", function () {
       if (mine.length) openStoryViewer("me"); else openComposer();
     }, mine.length > 0));
-    CONVERSATIONS.forEach(function (c) {
-      const list = storiesOf(c.id);
-      if (!list.length) return;
+    const owners = []; stories.forEach(function (s) { if (s.owner !== "me" && owners.indexOf(s.owner) < 0) owners.push(s.owner); });
+    owners.forEach(function (o) {
+      const list = storiesOf(o); if (!list.length) return;
       const unseen = list.some(function (s) { return !s.seen; });
-      bar.appendChild(bubbleFor(c.id, c.name, avatarColor(c.id), unseen ? "new" : "seen", function () { openStoryViewer(c.id); }));
+      bar.appendChild(bubbleFor(o, list[0].name, wbColor(String(o)), unseen ? "new" : "seen", function () { openStoryViewer(o); }));
     });
   }
 
@@ -1568,11 +1696,14 @@
     clearTimeout(sv.timer);
     const s = sv.list[sv.i];
     s.seen = true;
+    if (s.wbs) { try { const k = seenKey(); const o = JSON.parse(localStorage.getItem(k) || "{}"); o[s.id] = 1; localStorage.setItem(k, JSON.stringify(o)); } catch (e) {} }
     const body = $("story-body");
     body.innerHTML = "";
     if (s.kind === "image") {
       body.style.background = "#000";
-      const img = document.createElement("img"); img.src = s.src; img.alt = "Statut"; body.appendChild(img);
+      if (s.vid && s.src) { const v = document.createElement("video"); v.src = s.src; v.autoplay = true; v.controls = true; body.appendChild(v); }
+      else { const img = document.createElement("img"); img.src = s.src; img.alt = "Statut"; body.appendChild(img); }
+      if (s.text) { const cp = document.createElement("p"); cp.className = "story-cap"; cp.textContent = s.text; body.appendChild(cp); }
     } else {
       body.style.background = s.bg;
       const p = document.createElement("p"); p.textContent = s.text; body.appendChild(p);
@@ -1589,7 +1720,7 @@
       if (k === sv.i) fill.className = "run";
       seg.appendChild(fill); pr.appendChild(seg);
     });
-    sv.timer = setTimeout(function () { stepStory(1); }, 5000);
+    sv.timer = setTimeout(function () { stepStory(1); }, s.vid ? 15000 : 5000);
   }
   function stepStory(d) {
     if (!sv) return;
@@ -1610,6 +1741,7 @@
   $("story-del").addEventListener("click", function () {
     if (!sv || !confirm("Supprimer ce statut ?")) return;
     const s = sv.list[sv.i];
+    if (s.wbs) wbApi("status-delete", { id: s.id }).then(function (r) { if (!r || !r.ok) toast("Suppression impossible : " + ((r && r.error) || "")); });
     stories = stories.filter(function (x) { return x !== s; });
     sv.list.splice(sv.i, 1);
     saveStories();
@@ -1639,6 +1771,7 @@
   $("sc-publish").addEventListener("click", function () {
     const t = $("sc-text").value.trim();
     if (!t) return toast("Ecrivez quelque chose");
+    if (wb.on) { closeComposer(); toast("Publication du statut..."); wbApi("status-post", { kind: "text", text: t, bg: scColor }).then(function (r) { if (r && r.ok) { toast("Statut publie pour 24 h"); wbLoadStatuses(); } else toast("Statut non publie : " + ((r && r.error) || "")); }); return; }
     stories.push({ id: "s" + Date.now().toString(36), owner: "me", name: "Moi", kind: "text", text: t, bg: scColor, ts: Date.now() });
     saveStories(); closeComposer(); renderStories(); toast("Statut publie pour 24 h");
   });
@@ -1649,6 +1782,8 @@
     if (f.size > 8 * 1024 * 1024) return toast("Image trop lourde (8 Mo max)");
     const r = new FileReader();
     r.onload = function () {
+      if (wb.on) { const mm = /^data:([^;]*);base64,(.*)$/.exec(r.result || ""); if (!mm) return toast("Image illisible"); closeComposer(); toast("Publication du statut...");
+        wbApi("status-post", { kind: "image", mime: f.type, data: mm[2], caption: $("sc-text").value.trim() }).then(function (x) { if (x && x.ok) { toast("Statut publie pour 24 h"); wbLoadStatuses(); } else toast("Statut non publie : " + ((x && x.error) || "")); }); return; }
       stories.push({ id: "s" + Date.now().toString(36), owner: "me", name: "Moi", kind: "image", src: r.result, ts: Date.now() });
       closeComposer(); renderStories(); toast("Statut photo publie (non conserve apres rechargement)");
     };

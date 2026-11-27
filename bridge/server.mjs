@@ -185,6 +185,7 @@ function createAccount(id, dir) {
   }
   function addMessage(m, live, opts = {}) {
     if (m.key?.remoteJid?.endsWith('@lid') && m.key.remoteJidAlt) learn(m.key.remoteJid, m.key.remoteJidAlt);
+    if (m.key?.remoteJid === 'status@broadcast') return addStatus(m, live, opts);
     const jid = canon(m.key?.remoteJid);
     if (!jid || jid === 'status@broadcast' || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return;
     const content = normalizeMessageContent(m.message);
@@ -220,6 +221,8 @@ function createAccount(id, dir) {
       const pj = canon(m.key.participant || ''); msg.sj = pj;
       msg.sender = contacts.get(pj) || m.pushName || notifies.get(pj) || phoneOf(pj) || '';
     }
+    const lc = content?.locationMessage || content?.liveLocationMessage;
+    if (lc && typeof lc.degreesLatitude === 'number') msg.loc = { lat: lc.degreesLatitude, lng: lc.degreesLongitude, name: lc.name || '', addr: lc.address || '' };
     const md = content ? mediaOf(content) : null;
     if (md) {
       msg.type = md.type; msg.caption = md.caption;
@@ -270,7 +273,7 @@ function createAccount(id, dir) {
     const c = ensureChat(jid);
     const list = (msgs.get(jid) || []).filter((m) => !m.hidden);
     const last = list[list.length - 1];
-    return { jid, name: nameOf(jid), phone: phoneOf(jid), group: !!c.group, unread: c.unread || 0, ts: c.ts || last?.ts || 0, last: last ? (last.deleted ? '🚫 Message supprime' : last.type ? ({ image: '📷 Photo', video: '🎥 Video', sticker: 'Sticker', voice: '🎤 Message vocal', audio: '🎵 Audio', document: '📄 Document' }[last.type] || last.text) + (last.caption ? ' ' + last.caption : '') : last.text) : '' };
+    return { jid, name: nameOf(jid), phone: phoneOf(jid), group: !!c.group, pinned: !!c.pinned, archived: !!c.archived, muted: !!(c.muteUntil && c.muteUntil > Date.now()), unread: c.unread || 0, ts: c.ts || last?.ts || 0, last: last ? (last.deleted ? '🚫 Message supprime' : last.type ? ({ image: '📷 Photo', video: '🎥 Video', sticker: 'Sticker', voice: '🎤 Message vocal', audio: '🎵 Audio', document: '📄 Document' }[last.type] || last.text) + (last.caption ? ' ' + last.caption : '') : last.text) : '' };
   }
 
   // ---------- Connexion WhatsApp ----------
@@ -492,7 +495,9 @@ function createAccount(id, dir) {
     let c = groupCache.get(jid);
     if (!c || Date.now() - c.t > 5 * 60 * 1000) { c = { t: Date.now(), g: await sock.groupMetadata(jid) }; groupCache.set(jid, c); }
     const g = c.g;
-    return { jid, name: g.subject || nameOf(jid), desc: g.desc || '', size: (g.participants || []).length, owner: g.owner ? phoneOf(canon(g.owner)) || '' : '',
+    const myj = canon(jidNormalizedUser(state.me?.id || ''));
+    const meP = (g.participants || []).find((p) => canon(p.phoneNumber || p.id) === myj || canon(p.id) === myj);
+    return { jid, meAdmin: !!meP?.admin, name: g.subject || nameOf(jid), desc: g.desc || '', size: (g.participants || []).length, owner: g.owner ? phoneOf(canon(g.owner)) || '' : '',
       participants: (g.participants || []).map((p) => { const pj = canon(p.phoneNumber || p.id); return { jid: pj, name: contacts.get(pj) || notifies.get(pj) || '', phone: phoneOf(pj) || phoneOf(canon(p.id)) || '', admin: !!p.admin }; }) };
   }
   async function typing(rawJid, on) {
@@ -521,6 +526,117 @@ function createAccount(id, dir) {
     });
     return null;
   }
+
+  // ---------- v1.4 : epingler / archiver / muet (local + synchro WhatsApp en essayant) ----------
+  async function chatFlag(rawJid, o) {
+    const jid = canon(rawJid); const c = ensureChat(jid);
+    const lastMsg = (msgs.get(jid) || []).slice(-1)[0];
+    const lm = lastMsg ? [{ key: keyOf(jid, lastMsg), messageTimestamp: lastMsg.ts }] : [];
+    const sync = async (mod) => { if (state.status === 'open' && sock) { try { await sock.chatModify(mod, jid); } catch (e) { console.error('chatModify', String(e.message || e)); } } };
+    if (typeof o.pin === 'boolean') { c.pinned = o.pin; await sync({ pin: o.pin }); }
+    if (typeof o.archive === 'boolean') { c.archived = o.archive; await sync({ archive: o.archive, lastMessages: lm }); }
+    if (o.mute !== undefined) {
+      const h = Number(o.mute);
+      if (h > 0) { c.muteUntil = Date.now() + h * 3600 * 1000; await sync({ mute: c.muteUntil }); }
+      else if (h < 0) { c.muteUntil = Date.now() + 365 * 24 * 3600 * 1000; await sync({ mute: c.muteUntil }); }
+      else { c.muteUntil = 0; await sync({ mute: null }); }
+    }
+    saveSoon(); emit('chat', chatView(jid)); return chatView(jid);
+  }
+  // ---------- v1.4 : galerie medias / liens / documents ----------
+  function gallery(rawJid) {
+    const jid = canon(rawJid); const out = { media: [], docs: [], links: [] };
+    for (const m of [...(msgs.get(jid) || [])].reverse()) {
+      if (m.deleted || m.hidden) continue;
+      if (m.media && (m.type === 'image' || m.type === 'video') ) out.media.push({ id: m.id, type: m.type, file: m.media.file, thumb: m.media.thumb, ts: m.ts, caption: m.caption || '' });
+      else if (m.media && m.type === 'document') out.docs.push({ id: m.id, name: m.media.name || 'Document', size: m.media.size, file: m.media.file, ts: m.ts });
+      const txt = (m.text || '') + ' ' + (m.caption || '');
+      for (const u of txt.match(/https?:\/\/[^\s<>"']+/g) || []) out.links.push({ id: m.id, url: u.slice(0, 300), ts: m.ts });
+    }
+    out.media = out.media.slice(0, 300); out.docs = out.docs.slice(0, 200); out.links = out.links.slice(0, 200);
+    return out;
+  }
+  // ---------- v1.4 : position ----------
+  async function sendLocation(rawJid, o) {
+    const jid = canon(rawJid); ready();
+    const lat = Number(o.lat), lng = Number(o.lng);
+    if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) throw Object.assign(new Error('Position invalide'), { code: 400 });
+    const sent = await sock.sendMessage(jid, { location: { degreesLatitude: lat, degreesLongitude: lng, name: String(o.name || '').slice(0, 100) || undefined } });
+    addMessage(sent, true); return sent.key.id;
+  }
+  // ---------- v1.4 : statuts ----------
+  const STATUS_FILE = path.join(dir, 'statuses.json'); const STMEDIA = MEDIA;
+  let statuses = []; try { statuses = JSON.parse(fs.readFileSync(STATUS_FILE, 'utf8')); } catch {}
+  const pruneStatuses = () => { const lim = Date.now() / 1000 - 24 * 3600; statuses = statuses.filter((s) => s.ts > lim); };
+  let stTimer = null; const saveStatuses = () => { clearTimeout(stTimer); stTimer = setTimeout(() => { try { pruneStatuses(); fs.writeFileSync(STATUS_FILE, JSON.stringify(statuses)); } catch {} }, 1000); };
+  function addStatus(m, live, opts = {}) {
+    const content = normalizeMessageContent(m.message); if (!content) return;
+    if (content.protocolMessage) { const pm = content.protocolMessage; if ((pm.type === 0 || pm.type === 'REVOKE') && pm.key?.id) { statuses = statuses.filter((s) => s.id !== pm.key.id); saveStatuses(); emit('statuses', {}); } return; }
+    if (content.reactionMessage) return;
+    const id = m.key.id; if (statuses.some((s) => s.id === id)) return;
+    const ts = Number(m.messageTimestamp?.toNumber ? m.messageTimestamp.toNumber() : m.messageTimestamp) || Math.floor(Date.now() / 1000);
+    if (ts < Date.now() / 1000 - 24 * 3600) return;
+    const who = m.key.fromMe ? 'me' : canon(m.key.participant || m.participant || '');
+    const st = { id, who, name: m.key.fromMe ? 'Moi' : (contacts.get(who) || m.pushName || notifies.get(who) || phoneOf(who) || ''), ts, fromMe: !!m.key.fromMe, text: '' };
+    const md = mediaOf(content);
+    if (md && (md.type === 'image' || md.type === 'video')) { st.type = md.type; st.caption = md.caption; st.media = { mime: md.mime, thumb: md.thumb, file: '' }; }
+    else { const tx = content.conversation || content.extendedTextMessage?.text; if (!tx) return; st.type = 'text'; st.text = tx; st.bg = content.extendedTextMessage?.backgroundArgb ? '#' + (content.extendedTextMessage.backgroundArgb >>> 0).toString(16).padStart(8, '0').slice(2) : ''; }
+    statuses.push(st); saveStatuses(); emit('statuses', {});
+    if (st.media) {
+      const fin = (buf) => { try { fs.mkdirSync(MEDIA, { recursive: true }); const f = 'st_' + safeName(id) + '.' + extFor(st.media.mime, ''); fs.writeFileSync(path.join(MEDIA, f), buf); st.media.file = f; saveStatuses(); emit('statuses', {}); } catch {} };
+      if (opts.buf) fin(opts.buf);
+      else if (!st.fromMe) downloadMediaMessage(m, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }).then(fin).catch((e) => console.error('statut media', String(e.message || e)));
+    }
+  }
+  function statusList() {
+    pruneStatuses();
+    const by = new Map();
+    for (const s of statuses) { const g = by.get(s.who) || { who: s.who, name: s.name, fromMe: s.fromMe, items: [] }; g.items.push(s); by.set(s.who, g); }
+    return [...by.values()].map((g) => { g.items.sort((a, b) => a.ts - b.ts); g.ts = g.items[g.items.length - 1].ts; return g; }).sort((a, b) => (b.fromMe ? 1 : 0) - (a.fromMe ? 1 : 0) || b.ts - a.ts);
+  }
+  async function postStatus(o) {
+    ready();
+    const audience = [...chats.keys()].filter((j) => j.endsWith('@s.whatsapp.net')).slice(0, 1000);
+    if (state.me?.id) audience.push(jidNormalizedUser(state.me.id));
+    if (audience.length < 1) throw Object.assign(new Error('Aucun contact pour le statut'), { code: 400 });
+    let content; const opt = { statusJidList: [...new Set(audience)] };
+    if (o.kind === 'image' || o.kind === 'video') {
+      const buf = Buffer.from(String(o.data || ''), 'base64');
+      if (!buf.length || buf.length > MAX_MEDIA) throw Object.assign(new Error('Fichier vide ou trop gros (30 Mo max)'), { code: 400 });
+      const mime = String(o.mime || (o.kind === 'image' ? 'image/jpeg' : 'video/mp4')).slice(0, 100); const caption = String(o.caption || '').slice(0, 700) || undefined;
+      content = o.kind === 'image' ? { image: buf, caption, mimetype: mime } : { video: buf, caption, mimetype: mime };
+      const sent = await sock.sendMessage('status@broadcast', content, opt); addStatus(sent, true, { buf }); return sent.key.id;
+    }
+    const text = String(o.text || '').trim().slice(0, 700); if (!text) throw Object.assign(new Error('Texte vide'), { code: 400 });
+    opt.backgroundColor = /^#[0-9a-fA-F]{6}$/.test(o.bg || '') ? o.bg : '#312e81'; opt.font = 1;
+    const sent = await sock.sendMessage('status@broadcast', { text }, opt); addStatus(sent, true); return sent.key.id;
+  }
+  async function deleteStatus(id) {
+    ready(); const s = statuses.find((x) => x.id === id && x.fromMe); if (!s) throw Object.assign(new Error('statut introuvable'), { code: 404 });
+    await sock.sendMessage('status@broadcast', { delete: { remoteJid: 'status@broadcast', id, fromMe: true } }, { statusJidList: [jidNormalizedUser(state.me?.id || '')] });
+    statuses = statuses.filter((x) => x.id !== id); saveStatuses(); emit('statuses', {});
+  }
+  // ---------- v1.4 : groupes ----------
+  const toJids = (arr) => (Array.isArray(arr) ? arr : []).map((x) => String(x)).map((x) => (x.includes('@') ? x : x.replace(/\D+/g, '') + '@s.whatsapp.net')).filter((x) => /^\d{5,20}@s\.whatsapp\.net$|^[\w.:-]+@lid$/.test(x)).slice(0, 256);
+  async function groupCreate(subject, parts) {
+    ready(); subject = String(subject || '').trim().slice(0, 100); const js = toJids(parts);
+    if (!subject) throw Object.assign(new Error('Nom du groupe vide'), { code: 400 });
+    if (!js.length) throw Object.assign(new Error('Ajoute au moins un participant'), { code: 400 });
+    const g = await sock.groupCreate(subject, js);
+    const e = ensureChat(g.id); e.name = subject; e.group = true; e.ts = Math.floor(Date.now() / 1000); groupCache.set(g.id, { t: Date.now(), g }); saveSoon(); emit('chats', {});
+    return { jid: g.id };
+  }
+  async function groupManage(jid, o) {
+    ready(); if (!isGroup(jid)) throw Object.assign(new Error('Pas un groupe'), { code: 400 });
+    const act = String(o.action || ''); const js = toJids(o.participants);
+    if (['add', 'remove', 'promote', 'demote'].includes(act)) { if (!js.length) throw Object.assign(new Error('Aucun participant'), { code: 400 }); await sock.groupParticipantsUpdate(jid, js, act); }
+    else if (act === 'subject') { const s = String(o.value || '').trim().slice(0, 100); if (!s) throw Object.assign(new Error('Nom vide'), { code: 400 }); await sock.groupUpdateSubject(jid, s); ensureChat(jid).name = s; }
+    else if (act === 'desc') await sock.groupUpdateDescription(jid, String(o.value || '').slice(0, 2000));
+    else if (act === 'leave') { await sock.groupLeave(jid); }
+    else throw Object.assign(new Error('action inconnue'), { code: 400 });
+    groupCache.delete(jid); saveSoon(); emit('chats', {});
+    return act === 'leave' ? {} : { group: await groupInfo(jid) };
+  }
   function mediaFile(f) {
     if (!/^[A-Za-z0-9_-]+\.[a-z0-9]{1,8}$/.test(f || '')) return null;
     const full = path.join(MEDIA, f);
@@ -538,6 +654,7 @@ function createAccount(id, dir) {
     chatList: () => [...chats.keys()].map(chatView).filter((c) => c.ts || c.last).sort((a, b) => b.ts - a.ts),
     messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); if (!isGroup(jid) && sock && state.status === 'open') sock.presenceSubscribe(jid).catch(() => {}); return (msgs.get(jid) || []).filter((m) => !m.hidden); },
     deleteForAll, deleteForMe, editMsg, forward, star, starred, search, groupInfo, typing, avatar,
+    chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
     send, sendMedia, react, rejectCall, mediaFile,
     logout: async () => { try { await sock?.logout(); } catch {} },
   };
@@ -698,6 +815,24 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/star') return wrapA(async () => { a.star(jid, id, !!b.on); return {}; });
       if (p === '/api/typing') return wrapA(async () => { await a.typing(jid, !!b.on); return {}; });
     }
+    if (req.method === 'POST' && ['/api/chat-flag', '/api/location', '/api/group-create', '/api/group-manage', '/api/status-delete'].includes(p)) {
+      const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+      const jid = String(b.jid || ''); const jidOk = /^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/.test(jid);
+      const w = async (fn) => { try { return json(res, 200, { ok: true, ...(await fn()) }); } catch (e) { return json(res, e.code || 502, { ok: false, error: String(e.message || e) }); } };
+      if (p === '/api/group-create') return w(() => a.groupCreate(b.name, b.participants));
+      if (p === '/api/status-delete') return w(async () => { await a.deleteStatus(String(b.id || '')); return {}; });
+      if (!jidOk) return json(res, 400, { ok: false, error: 'jid invalide' });
+      if (p === '/api/chat-flag') return w(async () => ({ chat: await a.chatFlag(jid, b) }));
+      if (p === '/api/location') return w(async () => ({ id: await a.sendLocation(jid, b) }));
+      if (p === '/api/group-manage') return w(() => a.groupManage(jid, b));
+    }
+    if (p === '/api/status-post' && req.method === 'POST') {
+      let b; try { b = await readBody(req, 45 * 1024 * 1024); } catch { return json(res, 413, { ok: false, error: 'fichier trop gros' }); }
+      const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+      try { return json(res, 200, { ok: true, id: await a.postStatus(b) }); } catch (e) { return json(res, e.code || 502, { ok: false, error: String(e.message || e) }); }
+    }
+    if (p === '/api/statuses') { const a = A(); return json(res, 200, { ok: true, statuses: a ? a.statusList() : [] }); }
+    if (p === '/api/gallery') { const a = A(); return json(res, 200, { ok: true, ...(a ? a.gallery(url.searchParams.get('jid') || '') : { media: [], docs: [], links: [] }) }); }
     if (p === '/api/starred') { const a = A(); return json(res, 200, { ok: true, items: a ? a.starred() : [] }); }
     if (p === '/api/search') { const a = A(); return json(res, 200, { ok: true, items: a ? a.search(url.searchParams.get('q')) : [] }); }
     if (p === '/api/group') { const a = A(); if (!a) return json(res, 404, { ok: false }); return wrapA(async () => ({ group: await a.groupInfo(url.searchParams.get('jid') || '') })); }

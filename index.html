@@ -41,6 +41,7 @@
               <button data-act="notif">Notifications <span id="notif-state">off</span></button>
               <button data-act="accounts" id="acc-menu-btn">Comptes WhatsApp...</button>
               <button data-act="wb-logout" id="wb-logout-btn" class="hidden">Deconnecter ce compte</button>
+              <button data-act="newgroup">Nouveau groupe</button>
               <button data-act="starred">Messages favoris</button>
               <button data-act="rr">Accuses de lecture <span id="rr-state">on</span></button>
               <button data-act="typing">Indicateur d'ecriture <span id="typing-state">on</span></button>
@@ -66,6 +67,7 @@
         <button class="chip active" data-filter="all">Toutes</button>
         <button class="chip" data-filter="unread">Non lues</button>
         <button class="chip" data-filter="pinned">Epinglees</button>
+        <button class="chip" data-filter="archived">Archivees</button>
       </div>
 
       <!-- Liste des discussions (remplie par js/app.js) -->
@@ -101,7 +103,11 @@
             </button>
             <div class="dropdown hidden" id="chat-menu">
               <button data-act="info">Infos de la discussion</button>
+              <button data-act="media">Medias, docs et liens</button>
+              <button data-act="location">Envoyer une position</button>
               <button data-act="pin">Epingler la discussion</button>
+              <button data-act="mute">Mettre en sourdine</button>
+              <button data-act="archive">Archiver la discussion</button>
               <button data-act="clear">Vider la discussion</button>
               <button data-act="delete" class="danger">Supprimer la discussion</button>
             </div>
@@ -232,7 +238,15 @@
       <h2 id="list-title"></h2>
       <input id="list-filter" class="ask-input hidden" type="text" placeholder="Rechercher..." autocomplete="off" />
       <div id="list-box" class="acc-list"></div>
-      <div class="ask-btns"><button id="list-close">Fermer</button></div>
+      <div class="ask-btns"><button id="list-ok" class="ask-ok hidden">Valider</button><button id="list-close">Fermer</button></div>
+    </div>
+  </div>
+  <div class="overlay hidden" id="gal-overlay">
+    <div class="wb-card gal-card">
+      <h2 id="gal-title">Medias, docs et liens</h2>
+      <div class="gal-tabs"><button class="chip active" data-t="media">Medias</button><button class="chip" data-t="docs">Documents</button><button class="chip" data-t="links">Liens</button></div>
+      <div id="gal-box" class="gal-box"></div>
+      <div class="ask-btns"><button id="gal-close">Fermer</button></div>
     </div>
   </div>
   <div class="overlay hidden" id="ask-overlay">

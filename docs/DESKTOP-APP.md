@@ -31,3 +31,6 @@ Build it yourself: `cd desktop && npm install && npm run build`.
 
 ## v1.3
 Supprimer pour tous / pour moi, modifier (15 min, ses messages), transferer, favoris, recherche dans les discussions et globale, indicateur d'ecriture, photos de profil, infos de groupe et noms des expediteurs, reglage pour desactiver les accuses de lecture (sans accuses, on ne voit plus non plus ceux des autres). Envoi de notes vocales: pas encore.
+
+## v1.4
+Galerie medias/documents/liens par discussion, epingler/archiver/sourdine (synchro WhatsApp en essayant), vrais statuts (voir, publier texte ou photo, supprimer), creation et gestion de groupes (nom, description, ajouter/retirer, admins, quitter), envoi et reception de positions (saisie manuelle des coordonnees si la geolocalisation n'est pas disponible).
