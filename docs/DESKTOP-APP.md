@@ -47,3 +47,6 @@ Menu > "Cabinet (outils pro)". Tout est par compte WhatsApp et reste dans `%APPD
 - Poste partage : voir l'onglet "Poste partage" (2e PC lie au meme telephone).
 
 Confidentialite : les messages et donnees patients sont en clair sur le disque de ce PC. Utiliser BitLocker et un mot de passe Windows. Les reponses automatiques et rappels sont envoyes sous le nom du numero connecte, depuis ce PC, sans validation message par message.
+
+## v1.5.1
+Ligne "A propos : PingChat version X" en bas du menu parametres (lue depuis la version de l'application).

@@ -1959,6 +1959,7 @@
   ["mousemove", "keydown", "click"].forEach(function (ev) { document.addEventListener(ev, function () { if (!wb.locked) lockArm(); }, true); });
   if (lockCfg()) lockShow();
 
+  fetch("api/version").then(function (r) { return r.json(); }).then(function (v) { if (v && v.version) $("about-line").textContent = "A propos : PingChat version " + v.version; }).catch(function () {});
   // ---------- Demarrage ----------
   paintSettings();
   renderStories();

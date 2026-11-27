@@ -845,6 +845,7 @@ const server = http.createServer(async (req, res) => {
       gEmit('account-removed', { acc: b.acc }); changed();
       return json(res, 200, { ok: true, accounts: accountList() });
     }
+    if (p === '/api/version') return json(res, 200, { ok: true, version: process.env.PINGCHAT_VERSION || 'dev' });
     if (p === '/api/state') { const a = A(); return json(res, 200, { ok: true, bridge: 'baileys', multi: true, accounts: accountList(), ...(a ? a.publicState() : { status: 'none' }) }); }
     if (p === '/api/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });

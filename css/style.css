@@ -899,3 +899,4 @@ body.has-rail .story-view { left: 56px; }
 .qr-row.sel, .qr-row:hover { background: rgba(255,107,87,.2); }
 footer.composer, .chat-footer, main footer { position: relative; }
 .lock-ov { z-index: 999; background: #0d0b24; }
+.menu-about { padding: 8px 14px; font-size: 12px; color: var(--text-secondary); border-top: 1px solid var(--border); margin-top: 4px; cursor: default; }

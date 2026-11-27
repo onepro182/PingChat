@@ -52,6 +52,7 @@ function portFree(p) {
 async function startBridge() {
   process.env.PORT = String(PORT);
   process.env.PINGCHAT_QUIET = '1';
+  process.env.PINGCHAT_VERSION = app.getVersion();
   process.env.PINGCHAT_ROOT = path.join(__dirname, 'src', 'ui');
   process.env.PINGCHAT_DATA = path.join(app.getPath('userData'), 'whatsapp-data');
   log('userData', app.getPath('userData'), 'ui', process.env.PINGCHAT_ROOT, 'exists', fs.existsSync(path.join(process.env.PINGCHAT_ROOT, 'index.html')));
