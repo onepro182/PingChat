@@ -769,3 +769,28 @@ mark.hl.current { background: #ff9f1c; }
 .wb-card ol { text-align: left; font-size: 14px; color: var(--text-secondary); padding-left: 20px; line-height: 1.6; }
 .wb-warn { font-size: 12.5px; color: #c0392b; }
 #wb-logout-btn.hidden { display: none; }
+
+/* ---------- Comptes WhatsApp (barre de gauche) ---------- */
+.acc-rail { width: 64px; flex: 0 0 64px; background: #111b21; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 0; overflow-y: auto; z-index: 60; }
+.acc-rail.hidden { display: none; }
+.acc-btn { position: relative; width: 46px; height: 46px; border: 2px solid transparent; border-radius: 50%; background: transparent; padding: 0; cursor: pointer; color: #e9edef; font-size: 22px; flex: 0 0 auto; }
+.acc-btn.active { border-color: var(--green); }
+.acc-av { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border-radius: 50%; color: #fff; font-weight: 700; font-size: 18px; }
+.acc-dot { position: absolute; left: 0; bottom: 0; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #111b21; }
+.acc-dot.ok { background: #25d366; } .acc-dot.off { background: #8696a0; }
+.acc-badge { position: absolute; right: -4px; top: -4px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: #e53935; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.acc-add, .acc-man { background: #202c33; }
+.acc-man { margin-top: auto; font-size: 18px; }
+.acc-btn:hover { filter: brightness(1.15); }
+body.has-rail #wb-overlay { left: 64px; }
+#acc-overlay, #ask-overlay { z-index: 70; }
+.acc-list { width: 100%; display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+.acc-row { display: flex; align-items: center; gap: 8px; text-align: left; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.acc-row-t { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.acc-row-t small { color: var(--text-secondary); }
+.acc-row button, .ask-btns button { padding: 7px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--text-primary); cursor: pointer; }
+.acc-row button.danger { color: #c0392b; }
+.ask-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; font-size: 15px; background: var(--input-bg); color: var(--text-primary); outline: none; }
+.ask-btns { display: flex; gap: 10px; justify-content: center; }
+.ask-btns .ask-ok { background: var(--green); color: #fff; border-color: var(--green); }
+.wb-link { background: none; border: none; color: var(--text-secondary); text-decoration: underline; cursor: pointer; font-size: 13px; }

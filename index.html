@@ -14,6 +14,9 @@
 <body>
   <div class="app" id="app">
 
+    <!-- ============ COMPTES WHATSAPP ============ -->
+    <nav class="acc-rail hidden" id="acc-rail" aria-label="Comptes WhatsApp"></nav>
+
     <!-- ============ BARRE LATERALE ============ -->
     <aside class="sidebar" id="sidebar">
 
@@ -36,7 +39,8 @@
               <button data-act="theme">Mode sombre <span id="theme-state">off</span></button>
               <button data-act="sound">Sons <span id="sound-state">on</span></button>
               <button data-act="notif">Notifications <span id="notif-state">off</span></button>
-              <button data-act="wb-logout" id="wb-logout-btn" class="hidden">Deconnecter WhatsApp</button>
+              <button data-act="accounts" id="acc-menu-btn">Comptes WhatsApp...</button>
+              <button data-act="wb-logout" id="wb-logout-btn" class="hidden">Deconnecter ce compte</button>
               <button data-act="read-all">Tout marquer comme lu</button>
               <button data-act="delete-all" class="danger">Supprimer toutes les discussions</button>
               <button data-act="reset" class="danger">Reinitialiser les donnees</button>
@@ -200,7 +204,7 @@
   <div class="overlay hidden" id="wb-overlay">
     <div class="wb-card">
       <img src="assets/logo.svg" alt="" width="56" height="56" />
-      <h2>Connecter WhatsApp</h2>
+      <h2 id="wb-title">Connecter WhatsApp</h2>
       <div class="wb-qrbox"><img id="wb-qr" class="hidden" alt="Code QR WhatsApp" /></div>
       <p id="wb-msg" class="wb-msg">Preparation du code QR...</p>
       <ol>
@@ -209,6 +213,21 @@
         <li><b>Connecter un appareil</b> puis scanne ce code</li>
       </ol>
       <p class="wb-warn">Mode non officiel : utilise de preference un numero secondaire.</p>
+      <button id="wb-remove-btn" class="wb-link">Annuler et supprimer ce compte</button>
+    </div>
+  </div>
+  <div class="overlay hidden" id="acc-overlay">
+    <div class="wb-card">
+      <h2>Comptes WhatsApp</h2>
+      <div id="acc-list" class="acc-list"></div>
+      <div class="ask-btns"><button id="acc-new" class="ask-ok">+ Ajouter un compte</button><button id="acc-close">Fermer</button></div>
+    </div>
+  </div>
+  <div class="overlay hidden" id="ask-overlay">
+    <div class="wb-card">
+      <h2 id="ask-title"></h2>
+      <input id="ask-input" class="ask-input" type="text" autocomplete="off" />
+      <div class="ask-btns"><button id="ask-ok" class="ask-ok">OK</button><button id="ask-cancel">Annuler</button></div>
     </div>
   </div>
   <div class="toast hidden" id="toast"></div>

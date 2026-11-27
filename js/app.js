@@ -156,15 +156,20 @@
     } catch (e) {}
   }
   function updateTitle() {
-    const n = CONVERSATIONS.reduce(function (s, c) { return s + (c.unread || 0); }, 0);
+    let n = CONVERSATIONS.reduce(function (s, c) { return s + (c.unread || 0); }, 0);
+    if (typeof wb !== "undefined" && wb.on) wb.accounts.forEach(function (a) { if (a.id !== wb.acc) n += a.unread || 0; });
     document.title = (n ? "(" + n + ") " : "") + "PingChat";
   }
-  function notifyIncoming(conv, text) {
+  function notifyIncoming(conv, text, accName, accId) {
     playSound("in");
+    const title = accName ? conv.name + " · " + accName : conv.name;
     if (settings.notif && document.hidden && "Notification" in window && Notification.permission === "granted") {
-      try { new Notification(conv.name, { body: text, icon: "assets/logo.svg" }); } catch (e) {}
-    } else if (activeId !== conv.id) {
-      toast("💬 " + conv.name + " : " + text);
+      try {
+        const n = new Notification(title, { body: text, icon: "assets/logo.svg" });
+        n.onclick = function () { try { window.focus(); } catch (e) {} if (accId && typeof wbSwitch === "function" && accId !== wb.acc) wbSwitch(accId); };
+      } catch (e) {}
+    } else if (accId ? true : activeId !== conv.id) {
+      toast("💬 " + (accName ? "[" + accName + "] " : "") + conv.name + " : " + text);
     }
   }
 
@@ -224,9 +229,10 @@
       });
     }
     if (act === "wb-logout") {
-      if (!confirm("Deconnecter PingChat de ton WhatsApp ?")) return;
+      if (!confirm("Deconnecter ce compte WhatsApp ? Un nouveau QR sera demande.")) return;
       wbApi("logout", {}); return;
     }
+    if (act === "accounts") { if (wb.on) wbManage(); else toast("Disponible avec l'application Windows"); return; }
     if (act === "delete-all") {
       if (!CONVERSATIONS.length) return toast("Aucune discussion");
       if (!confirm("Supprimer TOUTES les discussions ?")) return;
@@ -334,11 +340,24 @@
   });
   searchInput.addEventListener("input", renderChatList);
 
+  // ---------- Petite boite de saisie (window.prompt n'existe pas dans l'application Windows) ----------
+  function askText(title, placeholder, value) {
+    return new Promise(function (resolve) {
+      const ov = $("ask-overlay"), inp = $("ask-input");
+      $("ask-title").textContent = title; inp.placeholder = placeholder || ""; inp.value = value || "";
+      ov.classList.remove("hidden"); setTimeout(function () { inp.focus(); inp.select(); }, 30);
+      function done(v) { ov.classList.add("hidden"); $("ask-ok").onclick = $("ask-cancel").onclick = inp.onkeydown = null; resolve(v); }
+      $("ask-ok").onclick = function () { done(inp.value); };
+      $("ask-cancel").onclick = function () { done(null); };
+      inp.onkeydown = function (e) { if (e.key === "Enter") done(inp.value); else if (e.key === "Escape") done(null); };
+    });
+  }
+
   // ---------- Nouvelle discussion ----------
-  $("new-chat-btn").addEventListener("click", function () {
-    const name = (prompt("Nom du contact :") || "").trim();
+  $("new-chat-btn").addEventListener("click", async function () {
+    const name = ((await askText("Nom du contact", "Ex : Sara", "")) || "").trim();
     if (!name) return;
-    const phone = (prompt(wb.on || live.on ? "Numero WhatsApp (ex: +212600000000) :" : "Numero de telephone (optionnel) :") || "").trim();
+    const phone = ((await askText("Numero WhatsApp", wb.on || live.on ? "Ex : +212600000000" : "Numero (optionnel)", "")) || "").trim();
     if (wb.on) {
       const p = normPhone(phone);
       if (!p) return toast("Numero WhatsApp invalide");
@@ -988,11 +1007,18 @@
   }
 
   // ---------- Mode WhatsApp Web (pont Node non officiel, bridge/) ----------
-  const wb = { on: false, es: null, status: "starting" };
+  const wb = { on: false, es: null, status: "starting", acc: null, accounts: [] };
   function wbApi(path, body) {
-    const opt = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-PingChat": "1" }, body: JSON.stringify(body) } : {};
-    return fetch("api/" + path, opt).then(function (r) { return r.json(); }).catch(function () { return { ok: false, error: "Pont injoignable (la fenetre noire est-elle ouverte ?)" }; });
+    const q = (path.indexOf("?") < 0 ? "?" : "&") + "acc=" + encodeURIComponent(wb.acc || "");
+    const opt = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-PingChat": "1" }, body: JSON.stringify(Object.assign({ acc: wb.acc }, body)) } : {};
+    return fetch("api/" + path + (body ? "" : q), opt).then(function (r) { return r.json(); }).catch(function () { return { ok: false, error: "Pont injoignable (l'application est-elle ouverte ?)" }; });
   }
+  function accName(a, idx) {
+    if (!a) return "Compte";
+    return a.label || (a.me && a.me.name) || a.phone || ("Compte " + ((idx >= 0 ? idx : 0) + 1));
+  }
+  function accById(id) { return wb.accounts.find(function (a) { return a.id === id; }); }
+  function accNameById(id) { const k = wb.accounts.findIndex(function (a) { return a.id === id; }); return accName(wb.accounts[k], k); }
   function wbColor(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return "hsl(" + h + ",45%,45%)"; }
   function wbMakeConv(c) {
     const id = "x" + c.jid;
@@ -1054,38 +1080,138 @@
     const open = s.status === "open";
     ov.classList.toggle("hidden", open);
     $("wb-logout-btn").classList.toggle("hidden", !open);
+    $("wb-title").textContent = "Connecter WhatsApp" + (wb.accounts.length > 1 ? " : " + accNameById(wb.acc) : "");
     const img = $("wb-qr");
     if (s.qr) { img.src = s.qr; img.classList.remove("hidden"); $("wb-msg").textContent = "Scanne ce code avec WhatsApp"; }
     else {
       img.classList.add("hidden");
       $("wb-msg").textContent = s.status === "reconnecting" ? "Reconnexion..." : s.status === "logged_out" ? "Deconnecte. Nouveau code en preparation..." : "Preparation du code QR...";
     }
-    if (open) { wbRefreshChats(); toast("Connecte a ton WhatsApp ✔"); }
+    if (open) { wbRefreshChats(); }
   }
+  function wbRenderRail() {
+    const rail = $("acc-rail"); if (!rail) return;
+    rail.classList.remove("hidden"); document.body.classList.add("has-rail");
+    rail.innerHTML = "";
+    wb.accounts.forEach(function (a, k) {
+      const b = document.createElement("button");
+      b.className = "acc-btn" + (a.id === wb.acc ? " active" : "");
+      const nm = accName(a, k);
+      b.title = nm + (a.phone ? " (" + a.phone + ")" : "") + (a.status !== "open" ? " - non connecte" : "");
+      const av = document.createElement("span"); av.className = "acc-av"; av.style.background = wbColor(a.id + nm);
+      av.textContent = (nm.replace(/^\+/, "").trim()[0] || "?").toUpperCase();
+      b.appendChild(av);
+      const dot = document.createElement("i"); dot.className = "acc-dot " + (a.status === "open" ? "ok" : "off"); b.appendChild(dot);
+      if (a.unread && a.id !== wb.acc) { const u = document.createElement("span"); u.className = "acc-badge"; u.textContent = a.unread > 99 ? "99+" : a.unread; b.appendChild(u); }
+      b.onclick = function () { wbSwitch(a.id); };
+      b.oncontextmenu = function (e) { e.preventDefault(); wbManage(); };
+      rail.appendChild(b);
+    });
+    const add = document.createElement("button"); add.className = "acc-btn acc-add"; add.title = "Ajouter un compte WhatsApp"; add.textContent = "+";
+    add.onclick = function () { wbAddAccount(); }; rail.appendChild(add);
+    const man = document.createElement("button"); man.className = "acc-btn acc-man"; man.title = "Gerer les comptes"; man.textContent = "⚙";
+    man.onclick = function () { wbManage(); }; rail.appendChild(man);
+    updateTitle();
+  }
+  function wbSetAccounts(list) {
+    wb.accounts = list || [];
+    if (!accById(wb.acc) && wb.accounts.length) { wbSwitch(wb.accounts[0].id); return; }
+    wbRenderRail();
+    if (!$("acc-overlay").classList.contains("hidden")) wbRenderManage();
+  }
+  function wbSwitch(id) {
+    if (!accById(id)) return Promise.resolve();
+    wb.acc = id;
+    CONVERSATIONS.length = 0; activeId = null; closeChat(); renderChatList(); wbRenderRail();
+    return fetch("api/state?acc=" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (s) {
+      if (wb.acc !== id) return;
+      wb.accounts = s.accounts || wb.accounts; wbRenderRail(); wbShowState(s);
+    }).catch(function () {});
+  }
+  function wbAddAccount() {
+    if (wb.accounts.length >= 10) return toast("Maximum 10 comptes");
+    if (wb.accounts.length >= 4 && !confirm("Chaque compte garde une connexion WhatsApp ouverte (environ 50 a 100 Mo de memoire chacun). Ajouter quand meme ?")) return;
+    askText("Nom du nouveau compte (optionnel)", "Ex : Perso, Boutique...", "").then(function (label) {
+      if (label === null) return;
+      wbApi("accounts/add", { label: label }).then(function (r) {
+        if (!r || !r.ok) return toast((r && r.error) || "Echec");
+        wb.accounts = r.accounts; wbSwitch(r.id);
+      });
+    });
+  }
+  function wbRenderManage() {
+    const box = $("acc-list"); box.innerHTML = "";
+    wb.accounts.forEach(function (a, k) {
+      const row = document.createElement("div"); row.className = "acc-row";
+      const t = document.createElement("div"); t.className = "acc-row-t";
+      t.innerHTML = "<b></b><small></small>";
+      t.firstChild.textContent = accName(a, k) + (a.id === wb.acc ? " (actif)" : "");
+      t.lastChild.textContent = (a.phone || "pas encore connecte") + " · " + (a.status === "open" ? "connecte" : a.status === "qr" ? "attend le QR" : a.status) + (a.unread ? " · " + a.unread + " non lus" : "");
+      row.appendChild(t);
+      const rn = document.createElement("button"); rn.textContent = "Renommer";
+      rn.onclick = function () {
+        askText("Nom du compte", "Nom", a.label || "").then(function (v) {
+          if (v === null) return;
+          wbApi("accounts/rename", { acc: a.id, label: v }).then(function (r) { if (r && r.ok) wbSetAccounts(r.accounts); });
+        });
+      };
+      const rm = document.createElement("button"); rm.textContent = "Supprimer"; rm.className = "danger";
+      rm.onclick = function () {
+        if (!confirm("Supprimer le compte \"" + accName(a, k) + "\" ?\nSa session et ses discussions sauvegardees ici seront effacees (ton WhatsApp sur le telephone n'est pas touche).")) return;
+        const wasActive = a.id === wb.acc;
+        wbApi("accounts/remove", { acc: a.id }).then(function (r) {
+          if (!r || !r.ok) return toast("Echec");
+          wb.accounts = r.accounts;
+          if (wasActive) { wb.acc = null; }
+          if (!wb.accounts.length) { wbApi("accounts/add", { label: "" }).then(function (x) { if (x && x.ok) { wb.accounts = x.accounts; wbSwitch(x.id); } }); }
+          else wbSetAccounts(wb.accounts);
+        });
+      };
+      row.appendChild(rn); row.appendChild(rm); box.appendChild(row);
+    });
+  }
+  function wbManage() { wbRenderManage(); $("acc-overlay").classList.remove("hidden"); }
   function startWb() {
     return fetch("api/state").then(function (r) { return r.json(); }).then(function (s) {
       if (!s || s.bridge !== "baileys") return false;
       wb.on = true;
+      wb.accounts = s.accounts || []; wb.acc = (wb.accounts[0] || {}).id || null;
       // on remplace les discussions de demo par les vraies
       CONVERSATIONS.length = 0; activeId = null; closeChat();
       stories = stories.filter(function (x) { return x.owner === "me"; }); renderStories();
-      renderChatList(); wbShowState(s);
+      renderChatList(); wbRenderRail(); wbShowState(s);
+      $("acc-close").onclick = function () { $("acc-overlay").classList.add("hidden"); };
+      $("acc-new").onclick = function () { $("acc-overlay").classList.add("hidden"); wbAddAccount(); };
+      $("wb-remove-btn").onclick = function () {
+        const a = accById(wb.acc); if (!a) return;
+        if (!confirm("Supprimer ce compte (" + accName(a, wb.accounts.indexOf(a)) + ") ?")) return;
+        wbApi("accounts/remove", { acc: a.id }).then(function (r) {
+          if (!r || !r.ok) return toast("Echec");
+          wb.accounts = r.accounts; wb.acc = null;
+          if (!wb.accounts.length) wbApi("accounts/add", { label: "" }).then(function (x) { if (x && x.ok) { wb.accounts = x.accounts; wbSwitch(x.id); } });
+          else wbSetAccounts(wb.accounts);
+        });
+      };
       const es = new EventSource("api/events"); wb.es = es;
-      es.addEventListener("state", function (e) { wbShowState(JSON.parse(e.data)); });
-      es.addEventListener("chats", function () { if (wb.status === "open") wbRefreshChats(); });
+      const mine = function (d) { return d.acc === wb.acc; };
+      es.addEventListener("accounts", function (e) { wbSetAccounts(JSON.parse(e.data).accounts); });
+      es.addEventListener("state", function (e) { const d = JSON.parse(e.data); if (mine(d)) { const was = wb.status; wbShowState(d); if (d.status === "open" && was !== "open") toast("Connecte : " + accNameById(wb.acc) + " ✔"); } });
+      es.addEventListener("chats", function (e) { const d = JSON.parse(e.data); if (mine(d) && wb.status === "open") wbRefreshChats(); });
       es.addEventListener("chat", function (e) {
-        const c = JSON.parse(e.data); let ex = getConv("x" + c.jid);
+        const c = JSON.parse(e.data); if (!mine(c)) return; let ex = getConv("x" + c.jid);
         if (!ex) { ex = wbMakeConv(c); CONVERSATIONS.push(ex); }
         ex.name = c.name || ex.name; ex.ts = c.ts; ex.preview = c.last; ex.timeLabel = c.ts ? hhmm(c.ts) : "";
         ex.unread = activeId === ex.id ? 0 : c.unread; renderChatList();
       });
       es.addEventListener("message", function (e) {
-        const d = JSON.parse(e.data); const ex = getConv("x" + d.jid); if (!ex) return;
+        const d = JSON.parse(e.data);
+        if (!mine(d)) { if (!d.msg.fromMe) notifyIncoming({ id: "", name: d.name || "Message" }, d.msg.text, accNameById(d.acc), d.acc); return; }
+        const ex = getConv("x" + d.jid); if (!ex) return;
         if (ex.loaded && wbAppend(ex, d.msg) && activeId === ex.id) { renderMessages(ex); scrollToBottom(); }
-        if (!d.msg.fromMe) notifyIncoming(ex, d.msg.text);
+        if (!d.msg.fromMe) notifyIncoming(ex, d.msg.text, wb.accounts.length > 1 ? accNameById(wb.acc) : "", wb.acc);
       });
       es.addEventListener("status", function (e) {
-        const d = JSON.parse(e.data); const ex = getConv("x" + d.jid); if (!ex) return;
+        const d = JSON.parse(e.data); if (!mine(d)) return; const ex = getConv("x" + d.jid); if (!ex) return;
         const m = findMsg(ex, "w" + d.id);
         if (m) { m.state = mapState(d.status); if (activeId === ex.id) renderMessages(ex); }
       });

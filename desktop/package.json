@@ -1,7 +1,7 @@
 {
   "name": "pingchat-desktop",
   "productName": "PingChat",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PingChat : application Windows avec pont WhatsApp (non officiel)",
   "author": "onepro182",
   "main": "main.js",
@@ -39,7 +39,7 @@
         "nsis",
         "portable"
       ],
-      "artifactName": "PingChat-Setup-${version}.${ext}"
+      "artifactName": "PingChat-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -51,7 +51,7 @@
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "PingChat-Portable-${version}.${ext}"
+      "artifactName": "PingChat-Portable-${version}-${arch}.${ext}"
     },
     "compression": "normal",
     "electronLanguages": [

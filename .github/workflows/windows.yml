@@ -1,0 +1,57 @@
+name: Windows build
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        working-directory: desktop
+        run: npm ci
+      - name: Build (installer + portable, x64 and ia32)
+        working-directory: desktop
+        run: |
+          node prepare.mjs
+          npx electron-builder --win nsis portable --x64 --ia32 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Smoke test (starts the real app on Windows)
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $exe = "dist\win-unpacked\PingChat.exe"
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 20
+          Write-Host "process alive: $(-not $p.HasExited)"
+          $ok = $false
+          try { $r = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:38211/api/state; Write-Host "HTTP $($r.StatusCode) $($r.Content)"; $ok = $true } catch { Write-Host "HTTP failed: $_" }
+          $log = Join-Path $env:APPDATA "PingChat\pingchat.log"
+          if (Test-Path $log) { Write-Host "---- log ----"; Get-Content $log } else { Write-Host "NO LOG FILE" }
+          Get-Process | Where-Object { $_.Name -like "PingChat*" } | Stop-Process -Force
+          if (-not $ok) { exit 1 }
+      - name: List
+        working-directory: desktop
+        shell: pwsh
+        run: Get-ChildItem dist -File | Select-Object Name, Length
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PingChat-windows
+          path: |
+            desktop/dist/*.exe
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --title "PingChat ${GITHUB_REF_NAME}" --notes "Windows build made by GitHub Actions on a real Windows machine. Unsigned: SmartScreen shows More info > Run anyway."
+          gh release upload "${GITHUB_REF_NAME}" desktop/dist/*.exe --clobber
