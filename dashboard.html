@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tableau de bord · PingChat</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="css/dashboard.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="assets/logo.svg" width="36" height="36" alt="" />
+      <div class="brand-txt"><span class="wordmark">ping<b>chat</b></span><small id="clinic">Tableau de bord</small></div>
+      <img id="clinic-logo" class="clinic-logo hidden" alt="" />
+    </div>
+    <nav class="accs" id="accs" aria-label="Comptes"></nav>
+    <div class="tools">
+      <label class="switch" title="Afficher des données d'exemple"><input type="checkbox" id="demo" /><span class="knob"></span><span class="sw-l">Démo</span></label>
+      <button class="btn ghost" id="refresh" title="Actualiser">↻</button>
+      <a class="btn" id="open-app" href="index.html">Ouvrir PingChat</a>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <main class="wrap" id="main">
+    <section class="hello">
+      <div>
+        <h1 id="today-title">—</h1>
+        <p id="today-sub" class="muted"></p>
+      </div>
+      <div class="stamp"><span id="conn" class="chip"></span><small id="stamp" class="muted"></small></div>
+    </section>
+
+    <section class="kpis" id="kpis"></section>
+
+    <section class="grid g2">
+      <article class="card"><header><h2>Messages sur 7 jours</h2><div class="legend"><i class="d in"></i>Reçus <i class="d out"></i>Envoyés</div></header><div id="ch-msgs"></div></article>
+      <article class="card"><header><h2>Rendez-vous des 7 prochains jours</h2><div class="legend"><i class="d ok"></i>Confirmés <i class="d wait"></i>En attente <i class="d no"></i>Annulés</div></header><div id="ch-appts"></div></article>
+    </section>
+
+    <section class="grid g3">
+      <article class="card"><header><h2>Agenda du jour</h2><span class="muted" id="ag-count"></span></header><div id="agenda" class="list"></div></article>
+      <article class="card"><header><h2>Statuts de la semaine</h2></header><div id="donut"></div></article>
+      <article class="card"><header><h2>Heures les plus chargées</h2><span class="muted">messages reçus, 14 jours</span></header><div id="ch-hours"></div></article>
+    </section>
+
+    <section class="grid g3">
+      <article class="card"><header><h2>Sans réponse</h2><span class="muted" id="un-count"></span></header><div id="unans" class="list"></div></article>
+      <article class="card"><header><h2>Activité récente</h2></header><div id="activity" class="list"></div></article>
+      <article class="card"><header><h2>À venir</h2><span class="muted">après aujourd'hui</span></header><div id="upcoming" class="list"></div></article>
+    </section>
+
+    <section class="grid g2">
+      <article class="card"><header><h2>Automatisations</h2></header><div id="autos" class="list"></div></article>
+      <article class="card"><header><h2>Patients par étiquette</h2></header><div id="labels" class="labels"></div></article>
+    </section>
+
+    <footer class="foot muted">Données calculées sur ce PC à partir de ce que PingChat a déjà enregistré. Rien n'est envoyé sur Internet. <span id="foot-mode"></span></footer>
+  </main>
+  <script src="js/dashboard.js"></script>
+</body>
+</html>

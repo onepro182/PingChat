@@ -1003,8 +1003,12 @@ function createAccount(id, dir) {
       today, upcoming, unread: unread.slice(0, 10), unreadChats: unread.length, unreadTotal, unanswered: unanswered.slice(0, 10), unansweredCount: unanswered.length,
       sched: { pending: pend.length, missed: sch.filter((x) => x.status === 'missed').length, failed: sch.filter((x) => x.status === 'failed').length, next: pend.slice(0, 6).map((x) => ({ name: nameOf(canon(x.jid)) || x.name, at: x.at, text: x.text.slice(0, 60) })) },
       auto: { on: !!pro.auto.on, open: isOpenAt(now), reminderHours: pro.remind.hours, pc: os.hostname() },
+      weekAppts: (() => { const out = []; for (let i = 0; i < 7; i++) { const a0 = t0 + i * 86400000, a1 = a0 + 86400000; const l = ap.filter((a) => a.at >= a0 && a.at < a1); out.push({ t: a0, confirmed: l.filter((a) => a.status === 'confirmed').length, pending: l.filter((a) => a.status === 'pending' || a.status === 'reminded').length, cancelled: l.filter((a) => a.status === 'cancelled').length, past: l.filter((a) => a.status === 'past').length }); } return out; })(),
+      hours: (() => { const h = new Array(24).fill(0); const from = now / 1000 - 14 * 86400; for (const [jid, list] of msgs) { if (isGroup(jid)) continue; for (const m of list) if (!m.fromMe && !m.deleted && m.type !== 'call' && m.ts >= from) h[new Date(m.ts * 1000).getHours()]++; } return h; })(),
+      respMedianMin: (() => { const d = []; const from = now / 1000 - 14 * 86400; for (const [jid, list] of msgs) { if (isGroup(jid)) continue; let wait = 0; for (const m of list) { if (m.deleted || m.type === 'call' || m.ts < from) continue; if (!m.fromMe) { if (!wait) wait = m.ts; } else if (wait) { d.push((m.ts - wait) / 60); wait = 0; } } } if (!d.length) return null; d.sort((a, b) => a - b); return Math.round(d[Math.floor(d.length / 2)]); })(),
+      activity: (() => { const ev = []; for (const a of pro.appts) { const nm = nameOf(canon(a.jid)) || a.name; if (a.remindedAt) ev.push({ t: a.remindedAt, kind: 'reminder', text: 'Rappel envoye a ' + nm }); if (a.repliedAt && a.reply) ev.push({ t: a.repliedAt, kind: a.reply, text: nm + (a.reply === 'confirmed' ? ' a confirme son rendez-vous' : ' a annule son rendez-vous') }); if (a.surveySentAt) ev.push({ t: a.surveySentAt, kind: 'survey', text: 'Sondage envoye a ' + nm }); if (a.ratedAt) ev.push({ t: a.ratedAt, kind: 'rating', text: nm + ' : note ' + a.rating + '/5' }); } for (const s of pro.sched) if (s.sentAt) ev.push({ t: s.sentAt, kind: 'sched', text: 'Message programme envoye a ' + (nameOf(canon(s.jid)) || s.name) }); for (const x of pro.spam) ev.push({ t: x.at, kind: 'spam', text: 'Message suspect de ' + x.name }); return ev.sort((a, b) => b.t - a.t).slice(0, 15); })(),
       survey: (() => { const r = pro.appts.filter((a) => a.rating && a.ratedAt >= now - 30 * 86400000); return { n: r.length, avg: r.length ? Math.round(r.reduce((t, a) => t + a.rating, 0) / r.length * 10) / 10 : 0, sent: pro.appts.filter((a) => a.surveySentAt >= now - 30 * 86400000).length }; })(),
-      labels: tagCount, days, week };
+      brand: { name: pro.brand.name || '', logo: pro.brand.logo || '', color: pro.brand.color || '' }, labels: tagCount, days, week };
   }
   function mediaFile(f) {
     if (!/^[A-Za-z0-9_-]+\.[a-z0-9]{1,8}$/.test(f || '')) return null;
@@ -1334,7 +1338,7 @@ const server = http.createServer(async (req, res) => {
   // Fichiers de l'interface PingChat (liste blanche stricte)
   let rel = p === '/' ? 'index.html' : decodeURIComponent(p).replace(/^\/+/, '');
   const top = rel.split('/')[0];
-  if (rel !== 'index.html' && !ALLOWED_DIRS.includes(top)) { res.writeHead(404); return res.end('not found'); }
+  if (rel !== 'index.html' && rel !== 'dashboard.html' && !ALLOWED_DIRS.includes(top)) { res.writeHead(404); return res.end('not found'); }
   const file = path.resolve(ROOT, rel);
   if (!file.startsWith(ROOT + path.sep)) { res.writeHead(403); return res.end('forbidden'); }
   fs.readFile(file, (err, data) => {

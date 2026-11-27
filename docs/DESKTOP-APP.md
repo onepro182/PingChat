@@ -85,3 +85,9 @@ Rendez-vous : correction de la detection des reponses (l'horloge du telephone n'
 - Cabinet > Attente : liste d'attente + creneaux liberes (rdv annules). Proposition MANUELLE, un patient a la fois, avec confirmation.
 - Cabinet > Spam : mots-cles sur le 1er message d'un numero inconnu. Signale seulement ; le blocage est manuel (bouton Bloquer + confirmation).
 - Rapport : moyenne de satisfaction sur 30 jours.
+
+## v1.7.0 : page Tableau de bord
+- Menu > "Tableau de bord" ouvre `dashboard.html` (page autonome, theme Pulse). Aussi accessible dans un navigateur sur http://127.0.0.1:38211/dashboard.html.
+- Contenu : rdv du jour et des 7 jours (confirmes / en attente / annules), taux de confirmation, non lus, sans reponse, temps de reponse median, satisfaction, messages 7 jours, heures de pointe, activite recente, automatisations, etiquettes. Choix du compte ou "Tous les comptes".
+- Interrupteur "Demo" (ou `dashboard.html?demo`) : donnees d'exemple generees dans la page, rien ne vient de vos patients. Sans pont lance (ex. GitHub Pages) la page affiche la demo automatiquement.
+- Donnees calculees localement a partir de ce que PingChat a deja enregistre. Rien n'est envoye sur Internet.

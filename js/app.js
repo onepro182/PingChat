@@ -261,7 +261,7 @@
       save(); renderChatList(); toast("Toutes les discussions sont lues");
     }
     if (act === "lang") return window.PCI18N.toggle();
-    if (act === "dash") return dashOpen();
+    if (act === "dash") { location.href = "dashboard.html"; return; }
     if (act === "pro") return proOpen("quick");
     if (act === "newgroup") { if (typeof wbNewGroup === "function" && wb.on) wbNewGroup(); else toast("Disponible avec WhatsApp Web"); return; }
     if (act === "reset") {
