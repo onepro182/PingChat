@@ -25,16 +25,21 @@ fs.mkdirSync(AUTH, { recursive: true });
 const state = { status: 'starting', qr: null, me: null, error: null };
 let chats = new Map();     // jid -> { id, name, unread, ts, group }
 let msgs = new Map();      // jid -> [ { id, fromMe, text, ts, status } ]
-let contacts = new Map();  // jid -> name
+let contacts = new Map();  // jid -> nom enregistre dans ton telephone
+let notifies = new Map();  // jid -> nom choisi par le contact (pushName)
+let lidPn = new Map();     // identifiant @lid -> numero @s.whatsapp.net
 try {
   const s = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
   chats = new Map(s.chats); msgs = new Map(s.msgs); contacts = new Map(s.contacts);
+  notifies = new Map(s.notifies || []); lidPn = new Map(s.lidPn || []);
+  // ancien texte d'erreur des versions precedentes : on le retire (le contenu est re-affiche quand il est recu a nouveau)
+  for (const [k, v] of msgs) msgs.set(k, v.filter((m) => m.text !== '[message non pris en charge]'));
 } catch {}
 let saveTimer = null;
 function saveSoon() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    try { fs.writeFileSync(STORE_FILE, JSON.stringify({ chats: [...chats], msgs: [...msgs], contacts: [...contacts] })); } catch {}
+    try { fs.writeFileSync(STORE_FILE, JSON.stringify({ chats: [...chats], msgs: [...msgs], contacts: [...contacts], notifies: [...notifies], lidPn: [...lidPn] })); } catch {}
   }, 1500);
 }
 
@@ -48,8 +53,65 @@ function emit(type, data) {
 // ---------- Utilitaires ----------
 const isGroup = (j) => j.endsWith('@g.us');
 const phoneOf = (j) => (j.endsWith('@s.whatsapp.net') ? '+' + j.split('@')[0] : null);
+const canon = (j) => (j && j.endsWith('@lid') && lidPn.get(j)) || j;
 function nameOf(jid) {
-  return chats.get(jid)?.name || contacts.get(jid) || phoneOf(jid) || jid.split('@')[0];
+  const n = chats.get(jid)?.name || contacts.get(jid) || notifies.get(jid);
+  if (n) return n;
+  if (isGroup(jid)) return 'Groupe';
+  const p = phoneOf(jid);
+  if (p) return p;
+  return 'Contact ...' + jid.split('@')[0].slice(-4);   // @lid sans numero connu
+}
+// Relie un identifiant @lid a son vrai numero et fusionne les doublons
+function learn(lid, pn) {
+  if (!lid || !pn || !lid.endsWith('@lid')) return;
+  pn = jidNormalizedUser(pn);
+  if (!pn.endsWith('@s.whatsapp.net') || lidPn.get(lid) === pn) return;
+  lidPn.set(lid, pn);
+  if (contacts.has(lid) && !contacts.has(pn)) contacts.set(pn, contacts.get(lid));
+  if (notifies.has(lid) && !notifies.has(pn)) notifies.set(pn, notifies.get(lid));
+  const a = chats.get(lid);
+  if (a) {
+    const b = ensureChat(pn);
+    if (!b.name && a.name) b.name = a.name;
+    b.unread = (b.unread || 0) + (a.unread || 0); b.ts = Math.max(b.ts || 0, a.ts || 0);
+    chats.delete(lid);
+  }
+  const ma = msgs.get(lid);
+  if (ma) {
+    const mb = msgs.get(pn) || []; const ids = new Set(mb.map((x) => x.id));
+    for (const m of ma) if (!ids.has(m.id)) mb.push(m);
+    mb.sort((x, y) => x.ts - y.ts); msgs.set(pn, mb); msgs.delete(lid);
+  }
+  saveSoon(); emit('chats', {});
+}
+function learnFrom(o) {
+  if (!o) return;
+  const ids = [o.id, o.lid, o.lidJid, o.phoneNumber, o.pnJid].filter(Boolean);
+  const lid = ids.find((x) => x.endsWith('@lid')); const pn = ids.find((x) => x.endsWith('@s.whatsapp.net') || x.endsWith('@c.us'));
+  if (lid && pn) learn(lid, pn);
+}
+function setName(id, saved, notify) {
+  if (saved) contacts.set(id, saved);
+  else if (notify && !contacts.has(id)) notifies.set(id, notify);
+}
+async function resolveLids() {
+  const repo = sock?.signalRepository?.lidMapping;
+  if (!repo) return;
+  for (const jid of [...chats.keys(), ...msgs.keys()]) {
+    if (!jid.endsWith('@lid') || lidPn.has(jid)) continue;
+    try { const pn = await repo.getPNForLID(jid); if (pn) learn(jid, pn); } catch {}
+  }
+}
+const TEXT_KEYS = ['conversation', 'text', 'caption', 'contentText', 'hydratedContentText', 'bodyText', 'selectedDisplayText', 'title', 'description', 'name', 'singleSelectReply'];
+function findText(o, depth = 0) {
+  if (!o || typeof o !== 'object' || depth > 4) return null;
+  for (const k of TEXT_KEYS) if (typeof o[k] === 'string' && o[k].trim()) return o[k];
+  for (const k of Object.keys(o)) {
+    if (k === 'contextInfo' || k === 'messageContextInfo' || k.endsWith('Key') || /thumbnail|jpeg|mediaKey|sha256|url/i.test(k)) continue;
+    const r = findText(o[k], depth + 1); if (r) return r;
+  }
+  return null;
 }
 function textOf(m) {
   const c = normalizeMessageContent(m.message);
@@ -61,10 +123,19 @@ function textOf(m) {
   if (c.audioMessage) return c.audioMessage.ptt ? '[message vocal]' : '[audio]';
   if (c.documentMessage) return '[document] ' + (c.documentMessage.fileName || '');
   if (c.stickerMessage) return '[sticker]';
-  if (c.contactMessage) return '[contact]';
-  if (c.locationMessage) return '[position]';
-  if (c.reactionMessage || c.protocolMessage || c.senderKeyDistributionMessage) return null;
-  return '[message non pris en charge]';
+  if (c.contactMessage) return '[contact] ' + (c.contactMessage.displayName || '');
+  if (c.contactsArrayMessage) return '[contacts]';
+  if (c.locationMessage || c.liveLocationMessage) return '[position]';
+  if (c.pollCreationMessage || c.pollCreationMessageV2 || c.pollCreationMessageV3) {
+    const p = c.pollCreationMessage || c.pollCreationMessageV2 || c.pollCreationMessageV3; return '[sondage] ' + (p.name || '');
+  }
+  if (c.reactionMessage || c.protocolMessage || c.senderKeyDistributionMessage || c.pollUpdateMessage || c.albumMessage || c.keepInChatMessage) return null;
+  const keys = Object.keys(c).filter((k) => k !== 'messageContextInfo');
+  if (!keys.length) return null;
+  // Messages WhatsApp Business (boutons, listes, modeles, interactifs...) : on cherche le texte dedans
+  const t = findText(c);
+  if (t) return t;
+  return '[message WhatsApp Business ou special : ' + keys[0].replace(/Message$/, '') + ']';
 }
 const STATUS = { 0: 'failed', 1: 'sent', 2: 'sent', 3: 'delivered', 4: 'read', 5: 'read' };
 function ensureChat(jid) {
@@ -72,7 +143,8 @@ function ensureChat(jid) {
   return chats.get(jid);
 }
 function addMessage(m, live) {
-  const jid = m.key?.remoteJid;
+  if (m.key?.remoteJid?.endsWith('@lid') && m.key.remoteJidAlt) learn(m.key.remoteJid, m.key.remoteJidAlt);
+  const jid = canon(m.key?.remoteJid);
   if (!jid || jid === 'status@broadcast' || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return;
   const text = textOf(m);
   if (text === null) return;
@@ -87,7 +159,8 @@ function addMessage(m, live) {
   msgs.set(jid, list);
   const ch = ensureChat(jid);
   if (ts >= ch.ts) ch.ts = ts;
-  if (!msg.fromMe && m.pushName && !isGroup(jid) && !ch.name) contacts.set(jid, m.pushName);
+  if (!msg.fromMe && m.pushName && !isGroup(jid)) setName(jid, null, m.pushName);
+  if (jid.endsWith('@lid') && !lidPn.has(jid)) sock?.signalRepository?.lidMapping?.getPNForLID(jid).then((pn) => pn && learn(jid, pn)).catch(() => {});
   if (live && !msg.fromMe) ch.unread = (ch.unread || 0) + 1;
   saveSoon();
   if (live) { emit('message', { jid, msg }); emit('chat', chatView(jid)); }
@@ -124,6 +197,7 @@ async function start() {
     }
     if (u.connection === 'open') {
       state.status = 'open'; state.qr = null;
+      resolveLids();
       state.me = sock.user ? { id: jidNormalizedUser(sock.user.id), name: sock.user.name || '' } : null;
       emit('state', publicState());
     }
@@ -134,7 +208,7 @@ async function start() {
         // deconnecte depuis le telephone : on efface la session et on redemande un QR
         state.status = 'logged_out';
         try { fs.rmSync(AUTH, { recursive: true, force: true }); fs.mkdirSync(AUTH, { recursive: true }); } catch {}
-        chats = new Map(); msgs = new Map(); contacts = new Map(); saveSoon();
+        chats = new Map(); msgs = new Map(); contacts = new Map(); notifies = new Map(); lidPn = new Map(); saveSoon();
         emit('state', publicState());
         setTimeout(start, 1500);
       } else if (!stopping) {
@@ -143,25 +217,31 @@ async function start() {
       }
     }
   });
-  sock.ev.on('messaging-history.set', ({ chats: cs, contacts: ct, messages }) => {
+  sock.ev.on('messaging-history.set', ({ chats: cs, contacts: ct, messages, lidPnMappings }) => {
+    for (const mp of lidPnMappings || []) learn(mp.lid, mp.pn);
+    for (const c of ct || []) learnFrom(c);
+    for (const c of cs || []) learnFrom(c);
     for (const c of cs || []) {
+      c.id = canon(c.id);
       const e = ensureChat(c.id);
       if (c.name) e.name = c.name;
       if (c.unreadCount) e.unread = c.unreadCount;
       const t = Number(c.conversationTimestamp?.toNumber ? c.conversationTimestamp.toNumber() : c.conversationTimestamp);
       if (t) e.ts = Math.max(e.ts, t);
     }
-    for (const c of ct || []) { const n = c.name || c.notify; if (n) contacts.set(c.id, n); }
+    for (const c of ct || []) setName(canon(c.id), c.name, c.notify);
     for (const m of messages || []) addMessage(m, false);
     saveSoon(); emit('chats', {});
   });
-  sock.ev.on('chats.upsert', (cs) => { for (const c of cs) { const e = ensureChat(c.id); if (c.name) e.name = c.name; } saveSoon(); emit('chats', {}); });
+  sock.ev.on('chats.upsert', (cs) => { for (const c of cs) learnFrom(c); for (const c of cs) { const e = ensureChat(canon(c.id)); if (c.name) e.name = c.name; } saveSoon(); emit('chats', {}); });
   sock.ev.on('chats.update', (us) => {
-    for (const u of us) { const e = ensureChat(u.id); if (u.name) e.name = u.name; if (typeof u.unreadCount === 'number') e.unread = u.unreadCount; }
+    for (const u of us) learnFrom(u);
+    for (const u of us) { const e = ensureChat(canon(u.id)); if (u.name) e.name = u.name; if (typeof u.unreadCount === 'number') e.unread = u.unreadCount; }
     saveSoon(); emit('chats', {});
   });
-  sock.ev.on('contacts.upsert', (ct) => { for (const c of ct) { const n = c.name || c.notify; if (n) contacts.set(c.id, n); } saveSoon(); });
-  sock.ev.on('contacts.update', (ct) => { for (const c of ct) { const n = c.name || c.notify; if (n && c.id) contacts.set(c.id, n); } saveSoon(); });
+  sock.ev.on('contacts.upsert', (ct) => { for (const c of ct) { learnFrom(c); setName(canon(c.id), c.name, c.notify); } saveSoon(); emit('chats', {}); });
+  sock.ev.on('contacts.update', (ct) => { for (const c of ct) { learnFrom(c); if (c.id) setName(canon(c.id), c.name, c.notify); } saveSoon(); emit('chats', {}); });
+  sock.ev.on('lid-mapping.update', (mp) => learn(mp.lid, mp.pn));
   sock.ev.on('messages.upsert', ({ messages, type }) => {
     for (const m of messages) addMessage(m, type === 'notify' || !!m.key.fromMe);
   });
@@ -215,13 +295,13 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, chats: list });
     }
     if (p === '/api/messages') {
-      const jid = url.searchParams.get('jid') || '';
+      const jid = canon(url.searchParams.get('jid') || '');
       const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); }
       return json(res, 200, { ok: true, messages: msgs.get(jid) || [] });
     }
     if (p === '/api/send' && req.method === 'POST') {
       const b = await readBody(req);
-      let jid = String(b.jid || '');
+      let jid = canon(String(b.jid || ''));
       if (!jid && b.phone) jid = String(b.phone).replace(/\D+/g, '') + '@s.whatsapp.net';
       const text = String(b.text || '').trim();
       if (!/^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/.test(jid) || !text) return json(res, 400, { ok: false, error: 'jid ou texte invalide' });
@@ -251,8 +331,16 @@ const server = http.createServer(async (req, res) => {
     res.end(data);
   });
 });
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') console.error(`Le port ${PORT} est deja utilise (le pont tourne peut-etre deja).`);
+  else console.error(e);
+  process.exit(1);
+});
 server.listen(PORT, HOST, () => {
   console.log(`\n PingChat (pont WhatsApp) pret : http://localhost:${PORT}/\n Laisse cette fenetre ouverte. Ctrl+C pour arreter.\n`);
 });
 process.on('SIGINT', () => { stopping = true; process.exit(0); });
 start().catch((e) => { console.error('Erreur de demarrage :', e); state.status = 'error'; state.error = String(e.message || e); });
+
+process.on('uncaughtException', (e) => console.error('Erreur :', e));
+process.on('unhandledRejection', (e) => console.error('Erreur :', e));

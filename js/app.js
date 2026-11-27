@@ -343,7 +343,7 @@
       const p = normPhone(phone);
       if (!p) return toast("Numero WhatsApp invalide");
       let ex = getConv("x" + p + "@s.whatsapp.net");
-      if (!ex) { ex = wbMakeConv({ jid: p + "@s.whatsapp.net", name: name, phone: "+" + p, group: false, unread: 0, ts: Math.floor(Date.now() / 1000), last: "" }); CONVERSATIONS.unshift(ex); }
+      if (!ex) { ex = wbMakeConv({ jid: p + "@s.whatsapp.net", name: name, phone: "+" + p, group: false, unread: 0, ts: Math.floor(Date.now() / 1000), last: "" }); ex.localNew = true; CONVERSATIONS.unshift(ex); }
       renderChatList(); return openConversation(ex.id);
     }
     if (live.on) {
@@ -1003,6 +1003,15 @@
   function wbRefreshChats() {
     return wbApi("chats").then(function (r) {
       if (!r || !r.ok) return;
+      const known = {};
+      r.chats.forEach(function (c) { known["x" + c.jid] = true; });
+      for (let i = CONVERSATIONS.length - 1; i >= 0; i--) {
+        const c = CONVERSATIONS[i];
+        if (c.wb && !known[c.id] && !c.localNew) {
+          if (activeId === c.id) { activeId = null; closeChat(); }
+          CONVERSATIONS.splice(i, 1);
+        }
+      }
       r.chats.forEach(function (c) {
         const ex = getConv("x" + c.jid);
         if (!ex) { CONVERSATIONS.push(wbMakeConv(c)); return; }

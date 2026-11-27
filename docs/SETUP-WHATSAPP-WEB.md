@@ -30,6 +30,32 @@ Sur le telephone : WhatsApp > Parametres (ou les 3 points) > **Appareils connect
 
 **Deconnecter** : menu (3 points) de PingChat > "Deconnecter WhatsApp", ou sur le telephone : Appareils connectes > PingChat/Mac > Deconnecter. Pour tout effacer : supprime le dossier `bridge\data`.
 
+## Faire tourner le pont sans fenetre noire (en arriere-plan)
+
+Avec `start-whatsapp.bat`, fermer la fenetre noire arrete tout. Pour un usage normal, utilise plutot les fichiers du dossier `bridge` :
+
+| Fichier (double-clic) | Role |
+|---|---|
+| `start-hidden.vbs` | Demarre le pont **cache** (aucune fenetre) et ouvre PingChat. Tu peux fermer le navigateur : le pont continue. |
+| `status-whatsapp.bat` | Dit si le pont tourne ("EN MARCHE" / "ARRETE") et affiche les dernieres lignes du journal. |
+| `stop-whatsapp.bat` | Arrete le pont. La session reste : pas de nouveau scan au prochain demarrage. |
+| `install-autostart.bat` | Lance le pont tout seul a chaque ouverture de session Windows (raccourci dans le dossier Demarrage). |
+| `remove-autostart.bat` | Enleve ce demarrage automatique. |
+
+Mode d'emploi simple :
+1. Une seule fois : `start-whatsapp.bat` (installation + scan QR), puis **ferme la fenetre noire** (ou Ctrl+C) pour arreter cette version visible. Important : si elle tourne encore, le port 3000 est pris et la version cachee ne pourra pas demarrer.
+2. Ensuite : double-clic sur `start-hidden.vbs`. PingChat s'ouvre sur http://localhost:3000/ . Pour y revenir plus tard, ouvre simplement cette adresse (mets-la en favori).
+3. Optionnel : `install-autostart.bat` pour que ca demarre tout seul avec Windows.
+4. Un souci ? `status-whatsapp.bat`. Le journal complet est dans `bridge\data\bridge.log`.
+
+Limites : le pont ne tourne que si le PC est allume et la session Windows ouverte (pas en veille prolongee). Si le PC se met en veille, il se reconnecte seul au reveil (en general). Si tu changes l'emplacement du dossier, relance `install-autostart.bat`.
+
+## Noms des contacts et types de messages
+
+- Les noms viennent de tes contacts WhatsApp (synchronises a la connexion) ou du nom que la personne s'est donne. WhatsApp identifie parfois un contact par un identifiant interne (`@lid`) : le pont le relie a son vrai numero des qu'il le connait, et fusionne les doublons. Sans nom ni numero connu, PingChat affiche `Contact ...1234` (les 4 derniers chiffres de l'identifiant) jusqu'a ce que WhatsApp donne l'information (souvent au prochain message de la personne).
+- Messages WhatsApp Business, boutons, listes, modeles : le pont affiche le texte qu'ils contiennent. S'il n'y en a pas, il affiche `[message WhatsApp Business ou special : type]`.
+- Les anciens messages marques "[message non pris en charge]" sont retires de la liste ; ils reapparaissent correctement s'ils sont recus a nouveau.
+
 ## Ce qui marche / ce qui ne marche pas
 
 | | |
@@ -58,7 +84,8 @@ Sur le telephone : WhatsApp > Parametres (ou les 3 points) > **Appareils connect
 ## Fichiers
 
 - `bridge/server.mjs` : le pont (Baileys + petit serveur local qui sert aussi l'interface).
-- `bridge/start-whatsapp.bat` : lancement Windows.
+- `bridge/start-whatsapp.bat` : lancement Windows (fenetre visible, premiere installation).
+- `bridge/start-hidden.vbs`, `stop-whatsapp.bat`, `status-whatsapp.bat`, `install-autostart.bat`, `remove-autostart.bat` : arriere-plan, arret, etat, demarrage automatique.
 - `bridge/package.json` : dependances (Baileys version fixee `7.0.0-rc14`, une version "release candidate").
 - `js/app.js` : bascule automatiquement en mode WhatsApp Web quand `/api/state` repond avec le pont.
 
