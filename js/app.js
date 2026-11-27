@@ -278,6 +278,7 @@
     if (act === "media") return wbGallery(conv);
     if (act === "tags") return wbTagPick(conv);
     if (act === "plan") return proOpen("appts", conv.jid);
+    if (act === "export") return wbExportChat(conv);
     if (act === "note") { if (conv.wb) return proOpen("note", conv.jid); toast("Notes disponibles avec WhatsApp Web"); return; }
     if (act === "location") return wbLocation(conv);
     if (act === "archive") return wbFlag(conv, { archive: !conv.archived }, conv.archived ? "Discussion desarchivee" : "Discussion archivee");
@@ -1231,6 +1232,18 @@
       if (!r || !r.ok) toast("Reaction non envoyee : " + ((r && r.error) || "echec"));
     });
   }
+  function wbExportChat(conv) {
+    if (!conv.wb) return toast("Export disponible avec WhatsApp Web");
+    if (!confirm("Exporter cette discussion en fichier HTML imprimable (a ouvrir puis Ctrl+P > Enregistrer au format PDF) ?\n\nLe fichier contient des donnees patient en clair : garde-le sur un support que tu controles.")) return;
+    const esc = function (x) { return String(x == null ? "" : x).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); };
+    wbApi("messages?jid=" + encodeURIComponent(conv.jid)).then(function (r) {
+      const list = (r && (r.messages || r.items)) || [];
+      if (!list.length) return toast("Rien a exporter");
+      let h = "<!doctype html><meta charset=utf-8><title>" + esc(conv.name) + "</title><style>body{font:14px Arial,sans-serif;max-width:700px;margin:20px auto}h1{font-size:20px}.m{margin:6px 0;padding:6px 10px;border-radius:8px;background:#eee;page-break-inside:avoid}.me{background:#dcf8c6;margin-left:60px}.t{color:#666;font-size:11px}</style><h1>Discussion avec " + esc(conv.name) + "</h1><p class=t>Exportee le " + esc(new Date().toLocaleString("fr-FR")) + " depuis PingChat. Document confidentiel.</p>";
+      list.forEach(function (m) { const ts = m.ts ? new Date(m.ts * 1000).toLocaleString("fr-FR") : ""; const body = m.text || m.caption || (m.type ? "[" + m.type + "]" : "") || (m.media ? "[" + (m.media.name || "media") + "]" : ""); h += "<div class='m" + (m.fromMe ? " me" : "") + "'><div class=t>" + esc(m.fromMe ? "Moi" : conv.name) + " · " + esc(ts) + "</div>" + esc(body).replace(/\n/g, "<br>") + "</div>"; });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([h], { type: "text/html" })); a.download = "discussion-" + String(conv.name).replace(/[^\w-]+/g, "_") + ".html"; document.body.appendChild(a); a.click(); a.remove(); toast("Discussion exportee (" + list.length + " messages)");
+    });
+  }
   function wbSendMedia(conv, body) {
     return wbApi("send-media", Object.assign({ jid: conv.jid }, body)).then(function (r) {
       if (r && r.ok) { playSound("send"); return; }
@@ -1869,7 +1882,7 @@
   })();
 
   // panneau Cabinet
-  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["agenda", "Agenda"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["backup", "Sauvegarde"], ["share", "Poste partage"]];
+  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["agenda", "Agenda"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["vac", "Conge"], ["link", "Lien / QR"], ["backup", "Sauvegarde"], ["share", "Poste partage"]];
   function proOpen(tab, preJid) {
     if (!wb.on) return toast("Les outils cabinet marchent avec WhatsApp Web");
     wb.proPre = preJid || null;
@@ -1933,7 +1946,7 @@
       const sel = chatSelect(wb.proPre); const dt = inp("datetime-local", ""); const note = inp("text", "", "Motif (facultatif)"); body.appendChild(field("Patient", sel)); body.appendChild(field("Date et heure", dt)); body.appendChild(field("Note", note));
       const go = el("button", "btn", "Ajouter le rendez-vous"); go.onclick = function () { if (!sel.value || !dt.value) return toast("Patient et date obligatoires"); wbApi("appt-add", { jid: sel.value, at: new Date(dt.value).getTime(), note: note.value }).then(function (r) { if (r && r.ok) { toast("Rendez-vous ajoute"); proTab("appts"); } else toast("Echec : " + ((r && r.error) || "")); }); }; body.appendChild(go);
       const rh = inp("number", P.remind.hours || 24); rh.min = 1; rh.max = 168; const rt = ta(P.remind.text); body.appendChild(el("h4", "", "Message de rappel")); body.appendChild(field("Heures avant le rendez-vous", rh)); body.appendChild(field("Texte ({nom} {date} {heure})", rt));
-      const sv = el("button", "btn secondary", "Enregistrer le rappel"); sv.onclick = function () { saveKey("remind", { hours: Number(rh.value), text: rt.value }); }; body.appendChild(sv);
+      const r2 = inp("number", P.remind.hours2 || 0); r2.min = 0; r2.max = 167; body.appendChild(field("2e rappel X heures avant (0 = pas de 2e rappel ; seulement si le patient n'a pas repondu, max 1 de plus)", r2)); const sv = el("button", "btn secondary", "Enregistrer le rappel"); sv.onclick = function () { saveKey("remind", { hours: Number(rh.value), hours2: Number(r2.value), text: rt.value }); }; body.appendChild(sv);
       body.appendChild(el("h4", "", "Journal des reponses (pourquoi une reponse a ete ignoree)")); const lg = el("div", "pro-list"); body.appendChild(lg);
       wbApi("pro-log").then(function (r) { (r.items || []).slice(0, 12).forEach(function (x) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", x.name + " · " + when(x.t) + " · « " + x.text + " »")); tx.appendChild(el("small", "pro-why", x.why)); row.appendChild(tx); lg.appendChild(row); }); if (!(r.items || []).length) lg.appendChild(el("div", "list-empty", "Rien pour le moment")); });
       const list = el("div", "pro-list"); body.appendChild(list);
@@ -1977,6 +1990,25 @@
       wbApi("note?jid=" + encodeURIComponent(jid)).then(function (r) { T.value = r.text || ""; meta.textContent = r.at ? "Derniere modification : " + when(r.at) : ""; });
       const sv = el("button", "btn", "Enregistrer la note"); sv.onclick = function () { wbApi("note", { jid: jid, text: T.value }).then(function (r) { toast(r && r.ok ? "Note enregistree" : "Echec"); if (r && r.ok) meta.textContent = r.note.at ? "Derniere modification : " + when(r.note.at) : "Note supprimee"; }); };
       body.appendChild(sv);
+    } else if (t === "vac") {
+      const V = P.vacation || { on: false, until: "", text: "" };
+      body.appendChild(el("p", "pro-note", "Mode conge : pendant cette periode, la 1re fois qu'un patient t'ecrit il recoit ce message (une seule fois par contact et par conge, groupes ignores). Il se coupe tout seul apres la date de retour. Marche seulement quand PingChat est ouvert et connecte."));
+      const on = el("input"); on.type = "checkbox"; on.checked = !!V.on; const lw = el("label", "pro-f inline"); lw.appendChild(on); lw.appendChild(el("span", "", "Activer le mode conge")); body.appendChild(lw);
+      const un = inp("date", V.until || ""); body.appendChild(field("Date de retour (derniere journee de conge incluse)", un));
+      const tx = ta(V.text); body.appendChild(field("Message ({date} = date de retour)", tx));
+      const sv = el("button", "btn", "Enregistrer"); sv.onclick = function () { if (on.checked && !un.value) return toast("Choisis la date de retour"); saveKey("vacation", { on: on.checked, until: un.value, text: tx.value }, on.checked ? "Mode conge active" : "Mode conge desactive"); }; body.appendChild(sv);
+    } else if (t === "link") {
+      body.appendChild(el("p", "pro-note", "Lien wa.me de ce compte : le patient clique (ou scanne le QR) et une discussion s'ouvre avec ton numero. Utile sur une carte de visite ou une affiche."));
+      const tx = inp("text", "", "Message pre-rempli (facultatif)"); body.appendChild(field("Message pre-rempli", tx));
+      const out = el("div"); body.appendChild(out);
+      function gen() { out.innerHTML = ""; wbApi("wame?text=" + encodeURIComponent(tx.value)).then(function (r) {
+        if (!r || !r.ok) { out.appendChild(el("p", "pro-note", "Impossible : " + ((r && r.error) || "echec"))); return; }
+        const im = document.createElement("img"); im.src = r.qr; im.width = 220; im.height = 220; im.style.background = "#fff"; im.style.borderRadius = "10px"; im.alt = "QR"; out.appendChild(im);
+        const li = inp("text", r.link); li.readOnly = true; out.appendChild(li);
+        const bar = el("div", "pro-bar"); const cp = el("button", "btn", "Copier le lien"); cp.onclick = function () { li.select(); (navigator.clipboard ? navigator.clipboard.writeText(r.link) : Promise.reject()).then(function () { toast("Lien copie"); }, function () { document.execCommand("copy"); toast("Lien copie"); }); };
+        const sa = el("button", "btn secondary", "Enregistrer le QR"); sa.onclick = function () { const a = document.createElement("a"); a.href = r.qr; a.download = "pingchat-qr.png"; document.body.appendChild(a); a.click(); a.remove(); };
+        bar.appendChild(cp); bar.appendChild(sa); out.appendChild(bar); }); }
+      const go = el("button", "btn secondary", "Generer"); go.onclick = gen; body.appendChild(go); gen();
     } else if (t === "backup") {
       body.appendChild(el("p", "pro-note", "La sauvegarde contient les discussions, messages, contacts, notes, rendez-vous et reglages de CE compte (" + accNameById(wb.acc) + "). Elle ne contient PAS la session WhatsApp ni les photos/documents. ATTENTION : c'est une donnee de sante en clair, sauf si tu mets un mot de passe. Garde-la sur un support que tu controles (cle USB chiffree, disque du cabinet), jamais dans un cloud public."));
       const pw = inp("password", "", "Mot de passe (facultatif mais conseille)"); body.appendChild(field("Mot de passe de chiffrement", pw));

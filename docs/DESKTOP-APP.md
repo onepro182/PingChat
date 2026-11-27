@@ -60,3 +60,9 @@ Rendez-vous : correction de la detection des reponses (l'horloge du telephone n'
 - Cabinet > Agenda : un jour a la fois, rendez-vous et messages programmes, statut Confirme/Annule change a la main (rien n'est envoye).
 - Chat > "Note privee" : note par patient dans pro.json, jamais envoyee.
 - Cabinet > Sauvegarde : export JSON (mot de passe AES-256-GCM facultatif), restauration (copie "pre-restore" gardee avant), sauvegarde automatique quotidienne gzip (10 dernieres) dans `accounts\<id>\backups`. Ne contient ni la session WhatsApp ni les medias.
+
+## v1.6.1
+- Rendez-vous : 2e rappel facultatif (X h avant, seulement si pas de reponse, 1 seul message de plus par rendez-vous, defaut OFF).
+- Cabinet > Conge : reponse automatique avec date de retour, une fois par contact et par conge, s'arrete seule apres la date.
+- Cabinet > Lien / QR : lien wa.me du compte (message pre-rempli facultatif) et QR enregistrable.
+- Chat > Exporter la discussion : fichier HTML imprimable (Ctrl+P > PDF). Contient des donnees patient en clair.

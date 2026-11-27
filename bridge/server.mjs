@@ -648,7 +648,7 @@ function createAccount(id, dir) {
   // ---------- v1.5 : outils cabinet (tout reste en local dans le dossier du compte) ----------
   const PRO_FILE = path.join(dir, 'pro.json');
   const proDefault = () => ({ quick: [], auto: { on: false, text: "Bonjour, le cabinet est actuellement ferme. Nous vous repondrons des la reouverture. En cas d'urgence, appelez le 15 (SAMU).", days: [1, 2, 3, 4, 5].map((d) => ({ d, on: true, start: '09:00', end: '18:00' })).concat([{ d: 6, on: false, start: '09:00', end: '13:00' }, { d: 0, on: false, start: '09:00', end: '13:00' }]), notified: {} },
-    labels: [], tagged: {}, sched: [], appts: [], remind: { hours: 24, text: 'Bonjour {nom}, rappel de votre rendez-vous le {date} a {heure}. Repondez OUI pour confirmer ou NON pour annuler.' } });
+    labels: [], tagged: {}, sched: [], appts: [], remind: { hours: 24, hours2: 0, text: 'Bonjour {nom}, rappel de votre rendez-vous le {date} a {heure}. Repondez OUI pour confirmer ou NON pour annuler.' } });
   let pro = proDefault();
   try { const s = JSON.parse(fs.readFileSync(PRO_FILE, 'utf8')); pro = { ...pro, ...s, auto: { ...pro.auto, ...(s.auto || {}) }, remind: { ...pro.remind, ...(s.remind || {}) } }; } catch {}
   let proTimer = null; const proSave = () => { clearTimeout(proTimer); proTimer = setTimeout(() => { try { fs.writeFileSync(PRO_FILE, JSON.stringify(pro)); } catch {} }, 400); };
@@ -657,7 +657,7 @@ function createAccount(id, dir) {
   const isOpenAt = (ms) => { const d = new Date(ms); const day = pro.auto.days.find((x) => x.d === d.getDay()); if (!day || !day.on) return false; const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); return hm >= day.start && hm < day.end; };
   // cle de l'absence en cours = instant (arrondi 15 min) ou le cabinet a ferme pour la derniere fois
   const absenceKey = (now) => { for (let t = now, i = 0; i < 8 * 96; i++, t -= 15 * 60000) if (isOpenAt(t)) return String(Math.floor(t / 900000)); return 'long'; };
-  const proPublic = () => ({ quick: pro.quick, auto: { on: pro.auto.on, text: pro.auto.text, days: pro.auto.days }, labels: pro.labels, remind: pro.remind, open: isOpenAt(Date.now()) });
+  const proPublic = () => ({ quick: pro.quick, auto: { on: pro.auto.on, text: pro.auto.text, days: pro.auto.days }, labels: pro.labels, remind: pro.remind, vacation: { on: pro.vacation.on, until: pro.vacation.until, text: pro.vacation.text }, open: isOpenAt(Date.now()) });
   function proSet(key, v) {
     if (key === 'quick') pro.quick = (Array.isArray(v) ? v : []).slice(0, 100).map((q) => ({ k: str(q.k, 30).replace(/^\//, '').replace(/\s+/g, '').toLowerCase(), text: str(q.text, 2000) })).filter((q) => q.k && q.text);
     else if (key === 'auto') {
@@ -667,7 +667,8 @@ function createAccount(id, dir) {
     } else if (key === 'labels') {
       pro.labels = (Array.isArray(v) ? v : []).slice(0, 30).map((l) => ({ id: str(l.id, 20).replace(/[^\w-]/g, '') || 'l' + Math.random().toString(36).slice(2, 7), name: str(l.name, 30), color: /^#[0-9a-fA-F]{6}$/.test(l.color) ? l.color : '#7c5cd6' })).filter((l) => l.name);
       const ok = new Set(pro.labels.map((l) => l.id)); for (const j of Object.keys(pro.tagged)) { pro.tagged[j] = pro.tagged[j].filter((x) => ok.has(x)); if (!pro.tagged[j].length) delete pro.tagged[j]; }
-    } else if (key === 'remind') { pro.remind.hours = Math.min(168, Math.max(1, Number(v.hours) || 24)); pro.remind.text = str(v.text, 600) || pro.remind.text; }
+    } else if (key === 'remind') { pro.remind.hours = Math.min(168, Math.max(1, Number(v.hours) || 24)); pro.remind.text = str(v.text, 600) || pro.remind.text; pro.remind.hours2 = Math.min(pro.remind.hours - 1, Math.max(0, Number(v.hours2) || 0)); if (pro.remind.hours2 < 1) pro.remind.hours2 = 0; }
+    else if (key === 'vacation') { const u = /^\d{4}-\d{2}-\d{2}$/.test(String(v.until || '')) ? String(v.until) : ''; pro.vacation = { on: !!v.on && !!u, until: u, text: str(v.text, 1000) || pro.vacation.text }; pro.vacation.notified = {}; }
     else throw Object.assign(new Error('reglage inconnu'), { code: 400 });
     proSave(); emit('pro', {}); return proPublic();
   }
@@ -700,12 +701,21 @@ function createAccount(id, dir) {
     a.status = status; a.manual = true; proSave(); emit('pro', {}); return a;
   };
   pro.notes = pro.notes && typeof pro.notes === 'object' ? pro.notes : {};
+  pro.vacation = { on: false, until: '', text: "Bonjour, le cabinet est en conge jusqu'au {date}. Nous vous repondrons a notre retour. En cas d'urgence, appelez le 15 (SAMU).", notified: {}, ...(pro.vacation || {}) };
+  pro.remind.hours2 = Number(pro.remind.hours2) || 0;
+  const vacActive = (now) => pro.vacation.on && pro.vacation.until && now < new Date(pro.vacation.until + 'T23:59:59').getTime();
   const noteGet = (rawJid) => { const j = canon(rawJid); return { text: pro.notes[j]?.text || '', at: pro.notes[j]?.at || 0 }; };
   const noteSet = (rawJid, text) => {
     const j = canon(rawJid); text = str(text, 8000);
     if (text.trim()) pro.notes[j] = { text, at: Date.now() }; else delete pro.notes[j];
     proSave(); emit('pro', {}); return noteGet(j);
   };
+  async function waLink(text) {
+    const num = (state.me?.id || '').split('@')[0].split(':')[0].replace(/\D/g, '');
+    if (!num) throw Object.assign(new Error('Compte pas encore connecte : numero inconnu'), { code: 409 });
+    const link = 'https://wa.me/' + num + (text ? '?text=' + encodeURIComponent(str(text, 500)) : '');
+    return { link, qr: await QRCode.toDataURL(link, { margin: 2, scale: 8 }) };
+  }
   const BK_DIR = path.join(dir, 'backups');
   function backupPayload() {
     return JSON.stringify({ app: 'pingchat', v: 1, at: Date.now(), pro, store: { chats: [...chats], msgs: [...msgs], contacts: [...contacts], notifies: [...notifies], lidPn: [...lidPn] } });
@@ -752,6 +762,7 @@ function createAccount(id, dir) {
     chats = new Map(st.chats); msgs = new Map(st.msgs); contacts = new Map(st.contacts || []); notifies = new Map(st.notifies || []); lidPn = new Map(st.lidPn || []);
     pro = { ...proDefault(), ...o.pro, auto: { ...proDefault().auto, ...(o.pro.auto || {}) }, remind: { ...proDefault().remind, ...(o.pro.remind || {}) } };
     pro.log = Array.isArray(pro.log) ? pro.log : []; pro.notes = pro.notes && typeof pro.notes === 'object' ? pro.notes : {};
+    pro.vacation = { on: false, until: '', text: pro.vacation?.text || '', ...(pro.vacation || {}), notified: {} }; pro.remind.hours2 = Number(pro.remind.hours2) || 0;
     try { fs.writeFileSync(PRO_FILE, JSON.stringify(pro)); fs.writeFileSync(STORE_FILE, JSON.stringify({ chats: [...chats], msgs: [...msgs], contacts: [...contacts], notifies: [...notifies], lidPn: [...lidPn] })); } catch {}
     emit('chats', {}); emit('pro', {}); return { chats: chats.size };
   }
@@ -808,8 +819,16 @@ function createAccount(id, dir) {
     if (ap) { applyReply(ap, msg.text, jid); return; }
     if (msg.fromMe) return;
     // 2) reponse automatique hors horaires, une seule fois par contact et par absence
-    if (!pro.auto.on || state.status !== 'open' || !sock) return;
+    if (state.status !== 'open' || !sock) return;
     if (now / 1000 - ts > 120) return;
+    if (vacActive(now)) {
+      const vk = 'v' + pro.vacation.until; if (pro.vacation.notified[jid] === vk) return;
+      pro.vacation.notified[jid] = vk; proSave();
+      const dt = new Date(pro.vacation.until + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+      sock.sendMessage(jid, { text: pro.vacation.text.replace(/\{date\}/g, dt) }).then((sent) => { noteSent(sent); addMessage(sent, true); }).catch((e) => { delete pro.vacation.notified[jid]; console.error('conge', String(e.message || e)); });
+      return;
+    }
+    if (!pro.auto.on) return;
     if (isOpenAt(now)) return;
     const key = absenceKey(now); if (pro.auto.notified[jid] === key) return;
     pro.auto.notified[jid] = key; proSave();
@@ -826,6 +845,11 @@ function createAccount(id, dir) {
     }
     for (const a of pro.appts) {
       if (a.status === 'pending' && a.at < now - 3600000) { a.status = a.reply || 'past'; dirty = true; continue; }
+      if (a.remindedAt && !a.reminded2At && pro.remind.hours2 > 0 && !a.reply && a.status === 'reminded' && a.at > now && a.at - now <= pro.remind.hours2 * 3600000 && now - a.remindedAt > 3600000 && state.status === 'open' && sock) {
+        a.reminded2At = now; dirty = true;
+        try { const sent = noteSent(await sock.sendMessage(a.jid, { text: fill(pro.remind.text, a) })); addMessage(sent, true); } catch (e) { a.reminded2At = 0; a.error = String(e.message || e).slice(0, 100); }
+        continue;
+      }
       if (a.remindedAt || a.at <= now || a.at - now > pro.remind.hours * 3600000) continue;
       if (state.status !== 'open' || !sock) continue;
       try { const sent = noteSent(await sock.sendMessage(a.jid, { text: fill(pro.remind.text, a) })); addMessage(sent, true); a.remindedAt = Date.now(); a.status = 'reminded'; } catch (e) { a.error = String(e.message || e).slice(0, 100); }
@@ -879,7 +903,7 @@ function createAccount(id, dir) {
     chatList: () => [...chats.keys()].map(chatView).filter((c) => c.ts || c.last).sort((a, b) => b.ts - a.ts),
     messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); if (!isGroup(jid) && sock && state.status === 'open') sock.presenceSubscribe(jid).catch(() => {}); return (msgs.get(jid) || []).filter((m) => !m.hidden); },
     deleteForAll, deleteForMe, editMsg, forward, star, starred, search, groupInfo, typing, avatar,
-    proPublic, proSet, apptSet, noteGet, noteSet, noteJids: () => Object.keys(pro.notes), backupMake, backupRestoreText, backupRestoreFile, backupList, backupAutoTick, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), proLog: () => pro.log.slice().reverse(), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, dashboard, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
+    proPublic, proSet, waLink, apptSet, noteGet, noteSet, noteJids: () => Object.keys(pro.notes), backupMake, backupRestoreText, backupRestoreFile, backupList, backupAutoTick, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), proLog: () => pro.log.slice().reverse(), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, dashboard, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
     send, sendMedia, react, rejectCall, mediaFile,
     logout: async () => { try { await sock?.logout(); } catch {} },
   };
@@ -1109,6 +1133,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/pro-log') { const a = A(); return json(res, 200, { ok: true, items: a ? a.proLog() : [] }); }
     if (p === '/api/sched') { const a = A(); return json(res, 200, { ok: true, items: a ? a.schedList() : [] }); }
     if (p === '/api/note' && req.method === 'GET') { const a = A(); return json(res, 200, { ok: true, ...(a ? a.noteGet(url.searchParams.get('jid') || '') : {}) }); }
+    if (p === '/api/wame') { const a = A(); if (!a) return json(res, 404, { ok: false }); try { return json(res, 200, { ok: true, ...(await a.waLink(url.searchParams.get('text') || '')) }); } catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); } }
     if (p === '/api/notes') { const a = A(); return json(res, 200, { ok: true, jids: a ? a.noteJids() : [] }); }
     if (p === '/api/backups') { const a = A(); return json(res, 200, { ok: true, items: a ? a.backupList() : [] }); }
     if (p === '/api/backup' && req.method === 'POST') {
