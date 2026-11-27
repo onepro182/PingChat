@@ -79,3 +79,9 @@ Rendez-vous : correction de la detection des reponses (l'horloge du telephone n'
 
 ## v1.6.4
 - Interface en arabe (partielle) : menu > "Langue / اللغة" bascule francais/arabe (RTL). `js/i18n.js` traduit par correspondance exacte les textes courts (menus, onglets Cabinet, boutons, statuts, messages courts). Les messages des discussions ne sont jamais traduits. Les longs textes d'aide du Cabinet restent en francais.
+
+## v1.6.5 : automatisations prudentes (tout desactive par defaut)
+- Cabinet > Messages auto : message de bienvenue (1re fois, numero inconnu, une seule fois) et sondage de satisfaction 1-5 (2 h apres un rdv confirme, une seule fois). Garde-fous : pas de groupes, 1 message par contact, 15 messages auto par heure max, STOP respecte, jamais en plus de l'absence/conge.
+- Cabinet > Attente : liste d'attente + creneaux liberes (rdv annules). Proposition MANUELLE, un patient a la fois, avec confirmation.
+- Cabinet > Spam : mots-cles sur le 1er message d'un numero inconnu. Signale seulement ; le blocage est manuel (bouton Bloquer + confirmation).
+- Rapport : moyenne de satisfaction sur 30 jours.

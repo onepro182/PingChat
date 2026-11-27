@@ -48,7 +48,7 @@
     "Disponible avec WhatsApp Web": "متوفر مع واتساب ويب", "Position envoyee": "تم إرسال الموقع", "Toutes les discussions sont lues": "كل المحادثات مقروءة", "Discussion supprimee": "تم حذف المحادثة",
     "Discussion introuvable": "المحادثة غير موجودة", "Rien a exporter": "لا شيء للتصدير", "Statut supprime": "تم حذف الحالة", "Message vocal trop court": "الرسالة الصوتية قصيرة جدا",
     "Micro indisponible ou acces refuse": "الميكروفون غير متوفر أو تم رفض الإذن", "Notifications desactivees": "الإشعارات معطّلة", "Ecrivez quelque chose": "اكتب شيئا",
-    "Langue / اللغة": "اللغة / Langue", "Envoyez et recevez des messages sans garder votre telephone connecte.": "أرسل واستقبل الرسائل دون إبقاء هاتفك متصلا."
+    "Langue / اللغة": "اللغة / Langue", "Messages auto": "رسائل تلقائية", "Attente": "الانتظار", "Spam": "مزعج", "Bloquer": "حظر", "Pas du spam": "ليس مزعجا", "Proposer": "اقتراح", "Envoyez et recevez des messages sans garder votre telephone connecte.": "أرسل واستقبل الرسائل دون إبقاء هاتفك متصلا."
   };
   let lang = localStorage.getItem("pingchat.lang") || "fr";
   const SKIP = "#messages, #chat-list, .msg-row, .bubble, .chat-name, .chat-last, .chat-item";

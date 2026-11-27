@@ -1912,7 +1912,7 @@
   })();
 
   // panneau Cabinet
-  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["agenda", "Agenda"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["types", "Types de rdv"], ["import", "Import"], ["brand", "Identite"], ["lib", "Fichiers"], ["find", "Recherche"], ["report", "Rapport"], ["vac", "Conge"], ["link", "Lien / QR"], ["backup", "Sauvegarde"], ["share", "Poste partage"]];
+  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["agenda", "Agenda"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["autom", "Messages auto"], ["wait", "Attente"], ["spam", "Spam"], ["types", "Types de rdv"], ["import", "Import"], ["brand", "Identite"], ["lib", "Fichiers"], ["find", "Recherche"], ["report", "Rapport"], ["vac", "Conge"], ["link", "Lien / QR"], ["backup", "Sauvegarde"], ["share", "Poste partage"]];
   function proOpen(tab, preJid) {
     if (!wb.on) return toast("Les outils cabinet marchent avec WhatsApp Web");
     wb.proPre = preJid || null;
@@ -2020,6 +2020,43 @@
       wbApi("note?jid=" + encodeURIComponent(jid)).then(function (r) { T.value = r.text || ""; meta.textContent = r.at ? "Derniere modification : " + when(r.at) : ""; });
       const sv = el("button", "btn", "Enregistrer la note"); sv.onclick = function () { wbApi("note", { jid: jid, text: T.value }).then(function (r) { toast(r && r.ok ? "Note enregistree" : "Echec"); if (r && r.ok) meta.textContent = r.note.at ? "Derniere modification : " + when(r.note.at) : "Note supprimee"; }); };
       body.appendChild(sv);
+    } else if (t === "autom") {
+      body.appendChild(el("p", "pro-note", "Messages automatiques envoyes par le cabinet SANS que tu les ecrives un par un. Tous sont DESACTIVES par defaut. Ils augmentent le risque de blocage par WhatsApp (comptes non officiels) : garde-les courts, utilise un numero secondaire pour tester. Garde-fous : jamais aux groupes, 1 seul message par contact, 15 messages automatiques par heure maximum, et un patient qui repond STOP n'en recoit plus."));
+      const W = P.welcome || {}, S = P.survey || {};
+      function block(title, desc, cfg, key) {
+        body.appendChild(el("h4", "", title)); body.appendChild(el("p", "pro-note", desc));
+        const on = el("input"); on.type = "checkbox"; on.checked = !!cfg.on; const lw = el("label", "pro-f inline"); lw.appendChild(on); lw.appendChild(el("span", "", "Activer")); body.appendChild(lw);
+        const tx = ta(cfg.text); body.appendChild(field("Message", tx));
+        const sv = el("button", "btn secondary", "Enregistrer"); sv.onclick = function () { if (on.checked && !confirm("Activer « " + title + " » ?\n\nPingChat enverra ce message automatiquement (seulement quand il est ouvert et connecte). Risque de blocage WhatsApp plus eleve.")) { return; } saveKey(key, { on: on.checked, text: tx.value }, on.checked ? "Active" : "Desactive"); }; body.appendChild(sv);
+      }
+      block("Message de bienvenue", "Envoye UNE fois, au tout premier message d'un numero que tu n'as pas dans tes contacts. Pas envoye si la reponse d'absence ou le mode conge repond deja, ni aux groupes.", W, "welcome");
+      block("Sondage de satisfaction (1 a 5)", "2 h apres un rendez-vous CONFIRME par le patient (et au plus tard 24 h apres), un seul message. Si le patient repond par un chiffre de 1 a 5, la note est gardee (moyenne 30 jours dans le Rapport). Rien d'autre n'est envoye.", S, "survey");
+    } else if (t === "wait") {
+      body.appendChild(el("p", "pro-note", "Liste d'attente : quand un rendez-vous est annule, les creneaux libres apparaissent ici et TU choisis a qui le proposer (un patient a la fois, avec confirmation). Rien n'est envoye automatiquement."));
+      const sel = chatSelect(wb.proPre); const nt = inp("text", "", "Note (ex. plutot le matin)"); body.appendChild(field("Patient", sel)); body.appendChild(field("Note", nt));
+      const add = el("button", "btn", "Ajouter a la liste d'attente"); add.onclick = function () { if (!sel.value) return toast("Choisis un patient"); wbApi("wait-add", { jid: sel.value, note: nt.value }).then(function (r) { toast(r && r.ok ? "Ajoute" : "Echec : " + ((r && r.error) || "")); proTab("wait"); }); }; body.appendChild(add);
+      const slots = el("div", "pro-list"), list = el("div", "pro-list");
+      body.appendChild(el("h4", "", "Creneaux liberes")); body.appendChild(slots); body.appendChild(el("h4", "", "En attente")); body.appendChild(list);
+      wbApi("wait").then(function (r) {
+        const items = r.items || [];
+        (r.slots || []).forEach(function (sl) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", when(sl.at))); tx.appendChild(el("small", "", "libere (annule par " + sl.name + ")")); row.appendChild(tx);
+          const ws = el("select", "ask-input"); items.forEach(function (w) { if ((w.offered || []).indexOf(sl.id) < 0) ws.appendChild(new Option(w.name, w.id)); });
+          if (ws.options.length) { const go = el("button", "btn secondary", "Proposer"); go.onclick = function () { const nm = ws.options[ws.selectedIndex].text; if (!confirm("Proposer le creneau du " + when(sl.at) + " a " + nm + " ?")) return; wbApi("wait-offer", { id: ws.value, apptId: sl.id }).then(function (x) { toast(x && x.ok ? "Propose a " + nm : "Echec : " + ((x && x.error) || "")); proTab("wait"); }); }; row.appendChild(ws); row.appendChild(go); } else row.appendChild(el("small", "", "personne a qui proposer"));
+          slots.appendChild(row); });
+        if (!(r.slots || []).length) slots.appendChild(el("div", "list-empty", "Aucun creneau libere (un rendez-vous annule a venir apparait ici)"));
+        items.forEach(function (w) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", w.name)); tx.appendChild(el("small", "", (w.note || "") + (w.offered && w.offered.length ? " · deja propose " + w.offered.length + " fois" : ""))); row.appendChild(tx); const d = el("button", "btn secondary", "✕"); d.onclick = function () { wbApi("wait-del", { id: w.id }).then(function () { proTab("wait"); }); }; row.appendChild(d); list.appendChild(row); });
+        if (!items.length) list.appendChild(el("div", "list-empty", "Liste vide"));
+      });
+    } else if (t === "spam") {
+      const C = P.spamCfg || { on: false, words: [] };
+      body.appendChild(el("p", "pro-note", "Filtre anti-spam PRUDENT : il regarde seulement le tout premier message d'un numero inconnu. S'il contient un de ces mots, il est SIGNALE ici (et aucun message automatique n'est envoye a ce numero). PingChat ne bloque JAMAIS tout seul : c'est toi qui cliques Bloquer. Un mot trop courant peut signaler un vrai patient."));
+      const on = el("input"); on.type = "checkbox"; on.checked = !!C.on; const lw = el("label", "pro-f inline"); lw.appendChild(on); lw.appendChild(el("span", "", "Activer le signalement")); body.appendChild(lw);
+      const wd = ta((C.words || []).join("\n")); body.appendChild(field("Mots (un par ligne)", wd));
+      const sv = el("button", "btn secondary", "Enregistrer"); sv.onclick = function () { saveKey("spamcfg", { on: on.checked, words: wd.value.split("\n") }, "Enregistre"); }; body.appendChild(sv);
+      body.appendChild(el("h4", "", "Messages signales")); const list = el("div", "pro-list"); body.appendChild(list);
+      wbApi("spam").then(function (r) { const items = r.items || []; items.forEach(function (x) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", x.name + " · " + when(x.at))); tx.appendChild(el("small", "", "« " + x.text + " » (mot : " + x.word + ")")); row.appendChild(tx);
+        if (x.status === "new") { const b = el("button", "btn secondary", "Bloquer"); b.onclick = function () { if (!confirm("Bloquer " + x.name + " sur WhatsApp ?")) return; wbApi("spam-act", { id: x.id, act: "block" }).then(function (y) { toast(y && y.ok ? "Bloque" : "Echec : " + ((y && y.error) || "")); proTab("spam"); }); }; const d = el("button", "btn secondary", "Pas du spam"); d.onclick = function () { wbApi("spam-act", { id: x.id, act: "dismiss" }).then(function () { proTab("spam"); }); }; row.appendChild(b); row.appendChild(d); } else row.appendChild(el("span", "list-badge", x.status === "blocked" ? "bloque" : "ignore"));
+        list.appendChild(row); }); if (!items.length) list.appendChild(el("div", "list-empty", "Rien de signale")); });
     } else if (t === "types") {
       body.appendChild(el("p", "pro-note", "Un message de rappel different par type de rendez-vous (ex. consultation, controle, premiere visite). Choisi quand tu ajoutes le rendez-vous ; sans type, le rappel standard est utilise. Variables : {nom} {date} {heure}."));
       const rows = (P.types || []).map(function (x) { return { id: x.id, name: x.name, text: x.text }; }); const box = el("div");
@@ -2072,7 +2109,7 @@
         if (!d || !d.ok) { box.textContent = "Rapport indisponible"; return; }
         const tin = d.days.reduce(function (a, x) { return a + x.in; }, 0), tout = d.days.reduce(function (a, x) { return a + x.out; }, 0), W = d.week;
         const d1 = new Date(d.days[0].t).toLocaleDateString("fr-FR"), d2 = new Date(d.days[6].t).toLocaleDateString("fr-FR");
-        const txt = ((P.brand && P.brand.name) ? P.brand.name + "\n" : "") + "Rapport hebdomadaire " + d1 + " - " + d2 + " (" + accNameById(wb.acc) + ")\n\nMessages recus : " + tin + "\nMessages envoyes : " + tout + "\nRappels de rendez-vous envoyes : " + W.reminded + "\nConfirmes : " + W.confirmed + "\nAnnules : " + W.cancelled + "\nSans reponse : " + W.noReply + "\nDiscussions sans reponse de ta part (7 j) : " + d.unansweredCount + "\nMessages non lus : " + d.unreadTotal + "\nMessages programmes en attente : " + d.sched.pending + " (manques : " + d.sched.missed + ")";
+        const txt = ((P.brand && P.brand.name) ? P.brand.name + "\n" : "") + "Rapport hebdomadaire " + d1 + " - " + d2 + " (" + accNameById(wb.acc) + ")\n\nMessages recus : " + tin + "\nMessages envoyes : " + tout + "\nRappels de rendez-vous envoyes : " + W.reminded + "\nConfirmes : " + W.confirmed + "\nAnnules : " + W.cancelled + "\nSans reponse : " + W.noReply + "\nDiscussions sans reponse de ta part (7 j) : " + d.unansweredCount + "\nMessages non lus : " + d.unreadTotal + "\nSatisfaction (30 j) : " + (d.survey && d.survey.n ? d.survey.avg + "/5 sur " + d.survey.n + " reponse(s)" : "aucune note") + "\nMessages programmes en attente : " + d.sched.pending + " (manques : " + d.sched.missed + ")";
         box.textContent = txt;
         const bar = el("div", "pro-bar"); const cp = el("button", "btn", "Copier"); cp.onclick = function () { (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast("Copie"); }, function () { toast("Copie impossible : selectionne le texte"); }); };
         const pr = el("button", "btn secondary", "Telecharger (HTML imprimable)"); pr.onclick = function () { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["<!doctype html><meta charset=utf-8><title>Rapport</title><pre style='font:15px Arial;white-space:pre-wrap;max-width:700px;margin:30px auto'>" + txt.replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }) + "</pre>"], { type: "text/html" })); a.download = "rapport-hebdo.html"; document.body.appendChild(a); a.click(); a.remove(); };

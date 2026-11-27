@@ -931,3 +931,6 @@ html[dir="rtl"] .welcome-screen { left: 0; right: max(var(--sidebar-width), var(
 html[dir="rtl"] .sidebar { border-right: 0; border-left: 1px solid var(--border); }
 html[dir="rtl"] .dropdown { right: auto; left: 0; }
 html[dir="rtl"] input, html[dir="rtl"] textarea { text-align: start; }
+.pro-item { flex-wrap: wrap; gap: 8px; }
+.pro-item select { max-width: 190px; }
+.pro-item > div:first-child { min-width: 120px; flex: 1 1 140px; }
