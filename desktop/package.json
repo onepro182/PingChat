@@ -1,0 +1,62 @@
+{
+  "name": "pingchat-desktop",
+  "productName": "PingChat",
+  "version": "1.0.0",
+  "description": "PingChat : application Windows avec pont WhatsApp (non officiel)",
+  "author": "onepro182",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "prepare-src": "node prepare.mjs",
+    "start": "npm run prepare-src && electron .",
+    "dist": "npm run prepare-src && electron-builder --win nsis portable --x64 --publish never"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "pino": "^10.4.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.onepro182.pingchat",
+    "productName": "PingChat",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "src/**/*",
+      "build/tray.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "PingChat-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PingChat",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "PingChat-Portable-${version}.${ext}"
+    },
+    "compression": "normal",
+    "electronLanguages": [
+      "en-US",
+      "fr"
+    ]
+  }
+}

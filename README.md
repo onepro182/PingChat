@@ -1,5 +1,7 @@
 # PingChat
 
+> Windows app (recommended): see [docs/DESKTOP-APP.md](docs/DESKTOP-APP.md)
+
 Interface web de discussion style WhatsApp, professionnelle et autonome.
 Projet de demonstration : aucune connexion a WhatsApp ni a aucun numero,
 les messages sont fictifs et stockes dans `js/data.js`.

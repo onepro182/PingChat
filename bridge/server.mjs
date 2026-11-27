@@ -12,8 +12,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(HERE, '..');           // dossier PingChat (index.html, css, js, assets)
-const DATA = path.join(HERE, 'data');
+// Variables d'environnement (utilisees par l'application Windows) : sinon valeurs par defaut du dossier bridge/
+const ROOT = path.resolve(process.env.PINGCHAT_ROOT || path.join(HERE, '..'));   // index.html, css, js, assets
+const DATA = path.resolve(process.env.PINGCHAT_DATA || path.join(HERE, 'data')); // session WhatsApp + sauvegarde locale
 const AUTH = path.join(DATA, 'auth');
 const STORE_FILE = path.join(DATA, 'store.json');
 const PORT = Number(process.env.PORT || 3000);
@@ -337,7 +338,7 @@ server.on('error', (e) => {
   process.exit(1);
 });
 server.listen(PORT, HOST, () => {
-  console.log(`\n PingChat (pont WhatsApp) pret : http://localhost:${PORT}/\n Laisse cette fenetre ouverte. Ctrl+C pour arreter.\n`);
+  if (!process.env.PINGCHAT_QUIET) console.log(`\n PingChat (pont WhatsApp) pret : http://localhost:${PORT}/\n Laisse cette fenetre ouverte. Ctrl+C pour arreter.\n`);
 });
 process.on('SIGINT', () => { stopping = true; process.exit(0); });
 start().catch((e) => { console.error('Erreur de demarrage :', e); state.status = 'error'; state.error = String(e.message || e); });
