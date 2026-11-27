@@ -9,6 +9,9 @@ import QRCode from 'qrcode';
 import pino from 'pino';
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -405,7 +408,10 @@ function createAccount(id, dir) {
     let content;
     if (o.kind === 'image') content = { image: buf, caption, mimetype: mime };
     else if (o.kind === 'video') content = { video: buf, caption, mimetype: mime };
-    else if (o.kind === 'voice') content = { audio: buf, ptt: true, mimetype: mime };
+    else if (o.kind === 'voice') {
+      if (/webm/i.test(mime) || (buf[0] === 0x1a && buf[1] === 0x45)) { let r; try { r = webmOpusToOgg(buf); } catch (e) { throw Object.assign(new Error('Vocal illisible : ' + e.message), { code: 400 }); } content = { audio: r.ogg, ptt: true, mimetype: 'audio/ogg; codecs=opus', seconds: Math.max(1, r.seconds | 0) }; }
+      else content = { audio: buf, ptt: true, mimetype: mime };
+    }
     else if (o.kind === 'audio') content = { audio: buf, mimetype: mime };
     else content = { document: buf, mimetype: mime, fileName: String(o.name || 'fichier').slice(0, 120), caption };
     const sent = await sock.sendMessage(jid, content, { quoted: quotedFor(jid, o.quotedId) });
@@ -686,6 +692,76 @@ function createAccount(id, dir) {
     const a = { id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), jid, name: nameOf(jid), at, note: str(note, 200), status: 'pending', remindedAt: 0, reply: null }; pro.appts.push(a); proSave(); emit('pro', {}); return a;
   }
   const apptDel = (id) => { pro.appts = pro.appts.filter((x) => x.id !== id); proSave(); emit('pro', {}); };
+
+  // ---------- v1.6 : agenda, notes privees, sauvegarde (tout local) ----------
+  const apptSet = (id, status) => {
+    if (!['pending', 'reminded', 'confirmed', 'cancelled', 'past'].includes(status)) throw Object.assign(new Error('statut invalide'), { code: 400 });
+    const a = pro.appts.find((x) => x.id === id); if (!a) throw Object.assign(new Error('rendez-vous introuvable'), { code: 404 });
+    a.status = status; a.manual = true; proSave(); emit('pro', {}); return a;
+  };
+  pro.notes = pro.notes && typeof pro.notes === 'object' ? pro.notes : {};
+  const noteGet = (rawJid) => { const j = canon(rawJid); return { text: pro.notes[j]?.text || '', at: pro.notes[j]?.at || 0 }; };
+  const noteSet = (rawJid, text) => {
+    const j = canon(rawJid); text = str(text, 8000);
+    if (text.trim()) pro.notes[j] = { text, at: Date.now() }; else delete pro.notes[j];
+    proSave(); emit('pro', {}); return noteGet(j);
+  };
+  const BK_DIR = path.join(dir, 'backups');
+  function backupPayload() {
+    return JSON.stringify({ app: 'pingchat', v: 1, at: Date.now(), pro, store: { chats: [...chats], msgs: [...msgs], contacts: [...contacts], notifies: [...notifies], lidPn: [...lidPn] } });
+  }
+  function backupMake(pass) {
+    const plain = backupPayload();
+    if (!pass) return plain;
+    const salt = crypto.randomBytes(16), iv = crypto.randomBytes(12);
+    const key = crypto.scryptSync(String(pass), salt, 32);
+    const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const data = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
+    return JSON.stringify({ app: 'pingchat', enc: true, salt: salt.toString('base64'), iv: iv.toString('base64'), tag: c.getAuthTag().toString('base64'), data: data.toString('base64') });
+  }
+  function backupParse(text, pass) {
+    let o; try { o = JSON.parse(text); } catch { throw Object.assign(new Error('Fichier de sauvegarde illisible'), { code: 400 }); }
+    if (o && o.enc) {
+      if (!pass) throw Object.assign(new Error('Cette sauvegarde est protegee : entre le mot de passe'), { code: 401 });
+      try {
+        const key = crypto.scryptSync(String(pass), Buffer.from(o.salt, 'base64'), 32);
+        const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(o.iv, 'base64')); d.setAuthTag(Buffer.from(o.tag, 'base64'));
+        o = JSON.parse(Buffer.concat([d.update(Buffer.from(o.data, 'base64')), d.final()]).toString('utf8'));
+      } catch { throw Object.assign(new Error('Mot de passe incorrect ou fichier abime'), { code: 401 }); }
+    }
+    if (!o || o.app !== 'pingchat' || !o.pro || !o.store || !Array.isArray(o.store.chats) || !Array.isArray(o.store.msgs)) throw Object.assign(new Error('Ce fichier n est pas une sauvegarde PingChat'), { code: 400 });
+    return o;
+  }
+  function backupFiles() { try { return fs.readdirSync(BK_DIR).filter((f) => /^(auto|pre-restore)-.*\.json\.gz$/.test(f)).sort().reverse(); } catch { return []; } }
+  function backupWrite(prefix) {
+    fs.mkdirSync(BK_DIR, { recursive: true });
+    const f = prefix + '-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.json.gz';
+    fs.writeFileSync(path.join(BK_DIR, f), zlib.gzipSync(backupPayload()));
+    for (const p of ['auto', 'pre-restore']) backupFiles().filter((x) => x.startsWith(p + '-')).slice(p === 'auto' ? 10 : 3).forEach((x) => { try { fs.unlinkSync(path.join(BK_DIR, x)); } catch {} });
+    return f;
+  }
+  function backupAutoTick() {
+    if (removed || !chats.size) return;
+    const last = backupFiles().find((x) => x.startsWith('auto-'));
+    let age = Infinity; if (last) { try { age = Date.now() - fs.statSync(path.join(BK_DIR, last)).mtimeMs; } catch {} }
+    if (age > 24 * 3600 * 1000) { try { backupWrite('auto'); } catch (e) { console.error('sauvegarde auto', String(e.message || e)); } }
+  }
+  function backupRestore(o) {
+    backupWrite('pre-restore');
+    const st = o.store;
+    chats = new Map(st.chats); msgs = new Map(st.msgs); contacts = new Map(st.contacts || []); notifies = new Map(st.notifies || []); lidPn = new Map(st.lidPn || []);
+    pro = { ...proDefault(), ...o.pro, auto: { ...proDefault().auto, ...(o.pro.auto || {}) }, remind: { ...proDefault().remind, ...(o.pro.remind || {}) } };
+    pro.log = Array.isArray(pro.log) ? pro.log : []; pro.notes = pro.notes && typeof pro.notes === 'object' ? pro.notes : {};
+    try { fs.writeFileSync(PRO_FILE, JSON.stringify(pro)); fs.writeFileSync(STORE_FILE, JSON.stringify({ chats: [...chats], msgs: [...msgs], contacts: [...contacts], notifies: [...notifies], lidPn: [...lidPn] })); } catch {}
+    emit('chats', {}); emit('pro', {}); return { chats: chats.size };
+  }
+  const backupRestoreText = (text, pass) => backupRestore(backupParse(text, pass));
+  const backupRestoreFile = (name, pass) => {
+    if (!backupFiles().includes(name)) throw Object.assign(new Error('sauvegarde introuvable'), { code: 404 });
+    return backupRestore(backupParse(zlib.gunzipSync(fs.readFileSync(path.join(BK_DIR, name))).toString('utf8'), pass));
+  };
+  const backupList = () => backupFiles().map((f) => { let st = null; try { st = fs.statSync(path.join(BK_DIR, f)); } catch {} return { name: f, size: st ? st.size : 0, at: st ? st.mtimeMs : 0 }; });
+  const backupAutoInt = setInterval(backupAutoTick, 3600 * 1000); setTimeout(backupAutoTick, 60000);
   const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\u2018\u2019']/g, ' ').replace(/\s+/g, ' ').trim();
   const AR = '[^\\u0600-\\u06ff]';
   const YES = new RegExp('(^|[^a-z])(ou+i+|ok+|okay|oki|confirme|confirmer|confirmee|confirmation|d accord|daccord|yes|yep|wakha|waha|wa?kha|sure|bien recu|c est bon)([^a-z]|$)|(^|' + AR + ')(نعم|اه|ايه|تاكيد|تأكيد|مؤكد|موافق|واخا|واكخا|اوكي|أكيد|اكيد)(' + AR + '|$)|\\u{1F44D}|\\u2705|\\u{1F44C}', 'u');
@@ -711,7 +787,7 @@ function createAccount(id, dir) {
     const r = apptReplyOf(text);
     if (!r) { plog(jid, text, 'ignore : reponse pas reconnue (ni oui ni non clair)'); return false; }
     if (ap.reply === r) { plog(jid, text, 'ignore : rendez-vous deja ' + (r === 'confirmed' ? 'confirme' : 'annule')); return false; }
-    ap.reply = r; ap.status = r; proSave(); emit('pro', {}); emit('appt', { id: ap.id, name: ap.name, reply: r, at: ap.at });
+    ap.reply = r; ap.status = r; ap.repliedAt = Date.now(); proSave(); emit('pro', {}); emit('appt', { id: ap.id, name: ap.name, reply: r, at: ap.at });
     plog(jid, text, 'OK : rendez-vous ' + (r === 'confirmed' ? 'confirme' : 'annule')); return true;
   }
   function proIncoming(jid, msg, ts) {
@@ -758,13 +834,41 @@ function createAccount(id, dir) {
     if (dirty) { proSave(); emit('pro', {}); }
   }
   const proInterval = setInterval(() => { proTick().catch((e) => console.error('pro', String(e.message || e))); }, 20000);
+  // ---------- v1.6 : tableau de bord (calcule a la demande, rien n'est envoye nulle part) ----------
+  function dashboard() {
+    const now = Date.now(); const d0 = new Date(now); d0.setHours(0, 0, 0, 0); const t0 = d0.getTime(), t1 = t0 + 86400000;
+    const apView = (a) => ({ id: a.id, jid: canon(a.jid), name: nameOf(canon(a.jid)) || a.name, at: a.at, note: a.note || '', status: a.status });
+    const ap = pro.appts.map(apView);
+    const today = ap.filter((a) => a.at >= t0 && a.at < t1).sort((a, b) => a.at - b.at);
+    const upcoming = ap.filter((a) => a.at >= t1 && a.at < t1 + 7 * 86400000).sort((a, b) => a.at - b.at).slice(0, 12);
+    const unread = []; const unanswered = []; let unreadTotal = 0;
+    for (const [jid, c] of chats) {
+      if (c.archived) continue;
+      const list = (msgs.get(jid) || []).filter((m) => !m.hidden && m.type !== 'call');
+      const last = list[list.length - 1];
+      if (c.unread > 0) { unreadTotal += c.unread; unread.push({ jid, name: nameOf(jid), unread: c.unread, ts: last?.ts || c.ts || 0, group: !!c.group }); }
+      if (!c.group && last && !last.fromMe && !last.deleted && now / 1000 - last.ts < 7 * 86400) unanswered.push({ jid, name: nameOf(jid), ts: last.ts, text: (last.type ? '[' + last.type + ']' : (last.text || '')).slice(0, 80) });
+    }
+    unread.sort((a, b) => b.ts - a.ts); unanswered.sort((a, b) => a.ts - b.ts);
+    const sch = pro.sched; const pend = sch.filter((x) => x.status === 'pending').sort((a, b) => a.at - b.at);
+    const tagCount = pro.labels.map((l) => ({ id: l.id, name: l.name, color: l.color, n: Object.values(pro.tagged).filter((t) => t.includes(l.id)).length }));
+    const days = []; for (let i = 6; i >= 0; i--) days.push({ t: t0 - i * 86400000, in: 0, out: 0 });
+    for (const [jid, list] of msgs) { if (isGroup(jid)) continue; for (const m of list) { if (m.deleted || m.type === 'call') continue; const k = Math.floor((m.ts * 1000 - days[0].t) / 86400000); if (k < 0 || k > 6) continue; if (m.fromMe) days[k].out++; else days[k].in++; } }
+    const wk = t0 - 6 * 86400000;
+    const week = { reminded: pro.appts.filter((a) => a.remindedAt >= wk).length, confirmed: pro.appts.filter((a) => a.reply === 'confirmed' && (a.repliedAt || a.remindedAt || 0) >= wk).length, cancelled: pro.appts.filter((a) => a.reply === 'cancelled' && (a.repliedAt || a.remindedAt || 0) >= wk).length, noReply: pro.appts.filter((a) => a.remindedAt >= wk && !a.reply).length };
+    return { acc: id, status: state.status, me: state.me?.id ? '+' + state.me.id.split('@')[0].split(':')[0] : '', now,
+      today, upcoming, unread: unread.slice(0, 10), unreadChats: unread.length, unreadTotal, unanswered: unanswered.slice(0, 10), unansweredCount: unanswered.length,
+      sched: { pending: pend.length, missed: sch.filter((x) => x.status === 'missed').length, failed: sch.filter((x) => x.status === 'failed').length, next: pend.slice(0, 6).map((x) => ({ name: nameOf(canon(x.jid)) || x.name, at: x.at, text: x.text.slice(0, 60) })) },
+      auto: { on: !!pro.auto.on, open: isOpenAt(now), reminderHours: pro.remind.hours, pc: os.hostname() },
+      labels: tagCount, days, week };
+  }
   function mediaFile(f) {
     if (!/^[A-Za-z0-9_-]+\.[a-z0-9]{1,8}$/.test(f || '')) return null;
     const full = path.join(MEDIA, f);
     return fs.existsSync(full) ? full : null;
   }
   async function destroy(wipe) {
-    removed = true; stopping = true; clearTimeout(saveTimer); clearInterval(proInterval);
+    removed = true; stopping = true; clearTimeout(saveTimer); clearInterval(proInterval); clearInterval(backupAutoInt);
     try { if (wipe) await sock?.logout(); } catch {}
     try { sock?.end(undefined); } catch {}
     if (wipe) { const rm = () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }; rm(); setTimeout(rm, 3000); }
@@ -775,7 +879,7 @@ function createAccount(id, dir) {
     chatList: () => [...chats.keys()].map(chatView).filter((c) => c.ts || c.last).sort((a, b) => b.ts - a.ts),
     messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); if (!isGroup(jid) && sock && state.status === 'open') sock.presenceSubscribe(jid).catch(() => {}); return (msgs.get(jid) || []).filter((m) => !m.hidden); },
     deleteForAll, deleteForMe, editMsg, forward, star, starred, search, groupInfo, typing, avatar,
-    proPublic, proSet, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), proLog: () => pro.log.slice().reverse(), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
+    proPublic, proSet, apptSet, noteGet, noteSet, noteJids: () => Object.keys(pro.notes), backupMake, backupRestoreText, backupRestoreFile, backupList, backupAutoTick, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), proLog: () => pro.log.slice().reverse(), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, dashboard, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
     send, sendMedia, react, rejectCall, mediaFile,
     logout: async () => { try { await sock?.logout(); } catch {} },
   };
@@ -839,6 +943,50 @@ function json(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
 }
+// --- Vocal: WebM/Opus -> Ogg/Opus (format attendu par WhatsApp) ---
+// ---------- WebM(Opus) -> Ogg(Opus) : pour envoyer de vrais messages vocaux WhatsApp ----------
+const CRC_T = (() => { const t = new Uint32Array(256); for (let i = 0; i < 256; i++) { let r = i << 24; for (let k = 0; k < 8; k++) r = (r & 0x80000000) ? ((r << 1) ^ 0x04c11db7) : (r << 1); t[i] = r >>> 0; } return t; })();
+function oggCrc(buf) { let c = 0; for (let i = 0; i < buf.length; i++) c = ((c << 8) ^ CRC_T[((c >>> 24) ^ buf[i]) & 0xff]) >>> 0; return c >>> 0; }
+function oggPage(packet, granule, serial, seq, type) {
+  const segs = []; let n = packet.length; while (n >= 255) { segs.push(255); n -= 255; } segs.push(n);
+  const h = Buffer.alloc(27 + segs.length); h.write('OggS', 0, 'latin1'); h[4] = 0; h[5] = type;
+  h.writeBigUInt64LE(BigInt(granule), 6); h.writeUInt32LE(serial, 14); h.writeUInt32LE(seq, 18); h.writeUInt32LE(0, 22); h[26] = segs.length; Buffer.from(segs).copy(h, 27);
+  const page = Buffer.concat([h, packet]); page.writeUInt32LE(oggCrc(page), 22); return page;
+}
+function opusSamples(p) {
+  const toc = p[0]; const cfg = toc >> 3; let fs;
+  if (cfg < 12) fs = [480, 960, 1920, 2880][cfg & 3]; else if (cfg < 16) fs = [480, 960][cfg & 1]; else fs = [120, 240, 480, 960][cfg & 3];
+  const c = toc & 3; const frames = c === 0 ? 1 : c === 3 ? (p[1] & 0x3f) : 2; return fs * frames;
+}
+function ebmlVint(b, i, keepMarker) { const f = b[i]; let len = 1; while (len <= 8 && !(f & (0x80 >> (len - 1)))) len++; if (len > 8) return null; let v = keepMarker ? f : f & (0xff >> len); for (let k = 1; k < len; k++) v = v * 256 + b[i + k]; const unknown = !keepMarker && (v === Math.pow(2, 7 * len) - 1); return { v, len, unknown }; }
+function webmOpusToOgg(buf) {
+  const packets = []; let head = null; let track = null;
+  const MASTER = new Set([0x18538067, 0x1F43B675, 0x1654AE6B, 0xAE, 0xA0]);
+  function walk(s, e) {
+    let i = s;
+    while (i < e) {
+      const id = ebmlVint(buf, i, true); if (!id) break; const sz = ebmlVint(buf, i + id.len, false); if (!sz) break;
+      const ds = i + id.len + sz.len; const de = sz.unknown ? e : Math.min(e, ds + sz.v);
+      if (MASTER.has(id.v)) walk(ds, de);
+      else if (id.v === 0x63A2 && !head) head = buf.subarray(ds, de);                    // CodecPrivate (OpusHead)
+      else if (id.v === 0xD7 && track === null) track = buf.readUIntBE(ds, de - ds);       // TrackNumber
+      else if (id.v === 0xA3 || id.v === 0xA1) { const tn = ebmlVint(buf, ds, false); const fr = ds + tn.len + 3; if (de > fr) packets.push(buf.subarray(fr, de)); }
+      i = de;
+    }
+  }
+  walk(0, buf.length);
+  if (!packets.length) throw new Error('audio vide ou format non reconnu');
+  let oh;
+  if (head && head.length >= 19 && head.toString('latin1', 0, 8) === 'OpusHead') oh = Buffer.from(head);
+  else { oh = Buffer.alloc(19); oh.write('OpusHead', 0, 'latin1'); oh[8] = 1; oh[9] = 1; oh.writeUInt16LE(312, 10); oh.writeUInt32LE(48000, 12); oh.writeUInt16LE(0, 16); oh[18] = 0; }
+  const tags = Buffer.concat([Buffer.from('OpusTags', 'latin1'), Buffer.from([8, 0, 0, 0]), Buffer.from('PingChat', 'latin1'), Buffer.from([0, 0, 0, 0])]);
+  const serial = (Math.random() * 0xffffffff) >>> 0; let seq = 0; const pages = [];
+  pages.push(oggPage(oh, 0, serial, seq++, 2)); pages.push(oggPage(tags, 0, serial, seq++, 0));
+  let gp = 0; let total = 0;
+  packets.forEach((p, k) => { gp += opusSamples(p); total = gp; pages.push(oggPage(p, gp, serial, seq++, k === packets.length - 1 ? 4 : 0)); });
+  return { ogg: Buffer.concat(pages), seconds: Math.max(1, Math.round(total / 48000)) };
+}
+
 function readBody(req, max = 100000) {
   return new Promise((ok, ko) => {
     let b = ''; req.on('data', (d) => { b += d; if (b.length > max) { ko(new Error('trop gros')); req.destroy(); } });
@@ -956,17 +1104,35 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/statuses') { const a = A(); return json(res, 200, { ok: true, statuses: a ? a.statusList() : [] }); }
     if (p === '/api/gallery') { const a = A(); return json(res, 200, { ok: true, ...(a ? a.gallery(url.searchParams.get('jid') || '') : { media: [], docs: [], links: [] }) }); }
     if (p === '/api/pro') { const a = A(); return json(res, a ? 200 : 404, { ok: !!a, ...(a ? a.proPublic() : {}) }); }
+    if (p === '/api/dashboard') { const a = A(); return json(res, a ? 200 : 404, { ok: !!a, ...(a ? a.dashboard() : {}) }); }
+    if (p === '/api/dashboard-all') return json(res, 200, { ok: true, items: [...accounts.values()].map((a) => ({ label: meta.find((m) => m.id === a.id)?.label || '', ...a.dashboard() })) });
     if (p === '/api/pro-log') { const a = A(); return json(res, 200, { ok: true, items: a ? a.proLog() : [] }); }
     if (p === '/api/sched') { const a = A(); return json(res, 200, { ok: true, items: a ? a.schedList() : [] }); }
+    if (p === '/api/note' && req.method === 'GET') { const a = A(); return json(res, 200, { ok: true, ...(a ? a.noteGet(url.searchParams.get('jid') || '') : {}) }); }
+    if (p === '/api/notes') { const a = A(); return json(res, 200, { ok: true, jids: a ? a.noteJids() : [] }); }
+    if (p === '/api/backups') { const a = A(); return json(res, 200, { ok: true, items: a ? a.backupList() : [] }); }
+    if (p === '/api/backup' && req.method === 'POST') {
+      const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+      const txt = a.backupMake(b.pass ? String(b.pass) : '');
+      res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="pingchat-sauvegarde-' + new Date().toISOString().slice(0, 10) + '.json"' }); return res.end(txt);
+    }
+    if (p === '/api/restore' && req.method === 'POST') {
+      let b; try { b = await readBody(req, 300 * 1024 * 1024); } catch { return json(res, 413, { ok: false, error: 'fichier trop gros' }); }
+      const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+      try { const r = b.file ? a.backupRestoreFile(String(b.file), String(b.pass || '')) : a.backupRestoreText(String(b.text || ''), String(b.pass || '')); return json(res, 200, { ok: true, ...r }); }
+      catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); }
+    }
     if (p === '/api/appts') { const a = A(); return json(res, 200, { ok: true, items: a ? a.apptList() : [] }); }
-    if (req.method === 'POST' && ['/api/pro-set', '/api/tag-chat', '/api/sched-add', '/api/sched-del', '/api/appt-add', '/api/appt-del'].includes(p)) {
+    if (req.method === 'POST' && ['/api/pro-set', '/api/tag-chat', '/api/sched-add', '/api/sched-del', '/api/appt-add', '/api/appt-del', '/api/appt-set', '/api/note'].includes(p)) {
       const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
       const w = async (fn) => { try { return json(res, 200, { ok: true, ...(await fn()) }); } catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); } };
       const jidOk = /^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/.test(String(b.jid || ''));
       if (p === '/api/pro-set') return w(() => ({ pro: a.proSet(String(b.key || ''), b.value || {}) }));
       if (p === '/api/sched-del') return w(() => { a.schedDel(String(b.id || '')); return {}; });
+      if (p === '/api/appt-set') return w(() => ({ item: a.apptSet(String(b.id || ''), String(b.status || '')) }));
       if (p === '/api/appt-del') return w(() => { a.apptDel(String(b.id || '')); return {}; });
       if (!jidOk) return json(res, 400, { ok: false, error: 'jid invalide' });
+      if (p === '/api/note') return w(() => ({ note: a.noteSet(b.jid, b.text) }));
       if (p === '/api/tag-chat') return w(() => a.tagChat(b.jid, String(b.tag || ''), !!b.on));
       if (p === '/api/sched-add') return w(() => ({ item: a.schedAdd(b.jid, b.text, b.at) }));
       if (p === '/api/appt-add') return w(() => ({ item: a.apptAdd(b.jid, b.at, b.note) }));

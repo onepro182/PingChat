@@ -260,6 +260,7 @@
       CONVERSATIONS.forEach(function (c) { c.unread = 0; });
       save(); renderChatList(); toast("Toutes les discussions sont lues");
     }
+    if (act === "dash") return dashOpen();
     if (act === "pro") return proOpen("quick");
     if (act === "newgroup") { if (typeof wbNewGroup === "function" && wb.on) wbNewGroup(); else toast("Disponible avec WhatsApp Web"); return; }
     if (act === "reset") {
@@ -277,6 +278,7 @@
     if (act === "media") return wbGallery(conv);
     if (act === "tags") return wbTagPick(conv);
     if (act === "plan") return proOpen("appts", conv.jid);
+    if (act === "note") { if (conv.wb) return proOpen("note", conv.jid); toast("Notes disponibles avec WhatsApp Web"); return; }
     if (act === "location") return wbLocation(conv);
     if (act === "archive") return wbFlag(conv, { archive: !conv.archived }, conv.archived ? "Discussion desarchivee" : "Discussion archivee");
     if (act === "mute") return conv.muted ? wbFlag(conv, { mute: 0 }, "Notifications reactivees") : openList("Mettre en sourdine pendant...", [{ title: "8 heures", onClick: function () { wbFlag(conv, { mute: 8 }, "Sourdine 8 h"); } }, { title: "1 semaine", onClick: function () { wbFlag(conv, { mute: 168 }, "Sourdine 1 semaine"); } }, { title: "Toujours", onClick: function () { wbFlag(conv, { mute: -1 }, "Sourdine activee"); } }], false);
@@ -946,7 +948,18 @@
     const dur = recorder._dur || 1;
     if (recCancelled || !activeId || dur < 0.6) { if (!recCancelled) toast("Message vocal trop court"); return; }
     const blob = new Blob(recChunks, { type: recorder.mimeType || "audio/webm" });
-    pushMessage(getConv(activeId), { type: "voice", src: URL.createObjectURL(blob), duration: dur });
+    const vconv = getConv(activeId);
+    if (vconv && vconv.wb) {
+      const rd = new FileReader();
+      rd.onload = function () {
+        const mm = /^data:([^;,]+)[^,]*;base64,(.*)$/.exec(String(rd.result));
+        if (!mm) { toast("Vocal illisible"); return; }
+        wbSendMedia(vconv, { kind: "voice", mime: blob.type || mm[1], data: mm[2] });
+      };
+      rd.readAsDataURL(blob);
+      return;
+    }
+    pushMessage(vconv, { type: "voice", src: URL.createObjectURL(blob), duration: dur });
   }
   $("rec-cancel").addEventListener("click", function () { finishRecording(false); });
 
@@ -1856,7 +1869,7 @@
   })();
 
   // panneau Cabinet
-  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["share", "Poste partage"]];
+  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["agenda", "Agenda"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["backup", "Sauvegarde"], ["share", "Poste partage"]];
   function proOpen(tab, preJid) {
     if (!wb.on) return toast("Les outils cabinet marchent avec WhatsApp Web");
     wb.proPre = preJid || null;
@@ -1925,6 +1938,63 @@
       wbApi("pro-log").then(function (r) { (r.items || []).slice(0, 12).forEach(function (x) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", x.name + " · " + when(x.t) + " · « " + x.text + " »")); tx.appendChild(el("small", "pro-why", x.why)); row.appendChild(tx); lg.appendChild(row); }); if (!(r.items || []).length) lg.appendChild(el("div", "list-empty", "Rien pour le moment")); });
       const list = el("div", "pro-list"); body.appendChild(list);
       wbApi("appts").then(function (r) { (r.items || []).slice().sort(function (a, b) { return a.at - b.at; }).forEach(function (a) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", a.name + " · " + when(a.at))); if (a.note) tx.appendChild(el("small", "", a.note)); row.appendChild(tx); row.appendChild(el("span", "list-badge st-" + a.status, ST_LABEL[a.status] || a.status)); const d = el("button", "btn secondary", "✕"); d.onclick = function () { wbApi("appt-del", { id: a.id }).then(function () { proTab("appts"); }); }; row.appendChild(d); list.appendChild(row); }); if (!(r.items || []).length) list.appendChild(el("div", "list-empty", "Aucun rendez-vous")); });
+    } else if (t === "agenda") {
+      if (!wb.agDay) { const n = new Date(); wb.agDay = n.getFullYear() + "-" + String(n.getMonth() + 1).padStart(2, "0") + "-" + String(n.getDate()).padStart(2, "0"); }
+      const bar0 = el("div", "pro-bar"); const dI = inp("date", wb.agDay);
+      function shift(n) { const d = new Date(dI.value + "T12:00:00"); d.setDate(d.getDate() + n); wb.agDay = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); proTab("agenda"); }
+      const pv = el("button", "btn secondary", "‹ Veille"), nx = el("button", "btn secondary", "Lendemain ›"), td = el("button", "btn secondary", "Aujourd'hui");
+      pv.onclick = function () { shift(-1); }; nx.onclick = function () { shift(1); }; td.onclick = function () { wb.agDay = null; proTab("agenda"); }; dI.onchange = function () { if (dI.value) { wb.agDay = dI.value; proTab("agenda"); } };
+      bar0.appendChild(pv); bar0.appendChild(dI); bar0.appendChild(nx); bar0.appendChild(td); body.appendChild(bar0);
+      const d0 = new Date(wb.agDay + "T00:00:00").getTime(), d1 = d0 + 86400000; const hm = function (ms) { return new Date(ms).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); };
+      body.appendChild(el("h4", "", new Date(d0).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })));
+      const box = el("div", "pro-list"); body.appendChild(box);
+      Promise.all([wbApi("appts"), wbApi("sched")]).then(function (rs) {
+        const rows = [];
+        (rs[0].items || []).forEach(function (a) { if (a.at >= d0 && a.at < d1) rows.push({ at: a.at, a: a }); });
+        (rs[1].items || []).forEach(function (x) { if (x.at >= d0 && x.at < d1 && x.status !== "cancelled") rows.push({ at: x.at, s: x }); });
+        rows.sort(function (x, y) { return x.at - y.at; });
+        if (!rows.length) box.appendChild(el("div", "list-empty", "Rien de prevu ce jour"));
+        rows.forEach(function (r) {
+          const row = el("div", "pro-item"); const tx = el("div");
+          if (r.a) {
+            tx.appendChild(el("b", "", hm(r.at) + " · " + r.a.name)); if (r.a.note) tx.appendChild(el("small", "", r.a.note));
+            row.appendChild(tx); row.appendChild(el("span", "list-badge st-" + r.a.status, ST_LABEL[r.a.status] || r.a.status));
+            [["confirmed", "Confirme"], ["cancelled", "Annule"]].forEach(function (b) { if (r.a.status === b[0]) return; const bt = el("button", "btn secondary", b[1]); bt.onclick = function () { wbApi("appt-set", { id: r.a.id, status: b[0] }).then(function () { proTab("agenda"); }); }; row.appendChild(bt); });
+          } else {
+            tx.appendChild(el("b", "", hm(r.at) + " · message a " + r.s.name)); tx.appendChild(el("small", "", r.s.text.slice(0, 80)));
+            row.appendChild(tx); row.appendChild(el("span", "list-badge st-" + r.s.status, ST_LABEL[r.s.status] || r.s.status));
+          }
+          box.appendChild(row);
+        });
+        const n = rows.filter(function (r) { return r.a; }).length; body.appendChild(el("p", "pro-note", n + " rendez-vous · " + (rows.length - n) + " message(s) programme(s). Les boutons Confirme / Annule changent seulement le statut ici, rien n'est envoye au patient."));
+      });
+    } else if (t === "note") {
+      const jid = wb.proPre; const conv = CONVERSATIONS.filter(function (c) { return c.jid === jid; })[0];
+      body.appendChild(el("h4", "", "Note privee : " + (conv ? conv.name : "")));
+      body.appendChild(el("p", "pro-note", "Visible seulement par toi. Jamais envoyee au patient. Stockee en clair dans le dossier de donnees de PingChat sur ce PC (pas dans le cloud)."));
+      const T = ta("", "Antecedents, allergies, remarques..."); T.rows = 8; body.appendChild(T);
+      const meta = el("small", "pro-note", ""); body.appendChild(meta);
+      wbApi("note?jid=" + encodeURIComponent(jid)).then(function (r) { T.value = r.text || ""; meta.textContent = r.at ? "Derniere modification : " + when(r.at) : ""; });
+      const sv = el("button", "btn", "Enregistrer la note"); sv.onclick = function () { wbApi("note", { jid: jid, text: T.value }).then(function (r) { toast(r && r.ok ? "Note enregistree" : "Echec"); if (r && r.ok) meta.textContent = r.note.at ? "Derniere modification : " + when(r.note.at) : "Note supprimee"; }); };
+      body.appendChild(sv);
+    } else if (t === "backup") {
+      body.appendChild(el("p", "pro-note", "La sauvegarde contient les discussions, messages, contacts, notes, rendez-vous et reglages de CE compte (" + accNameById(wb.acc) + "). Elle ne contient PAS la session WhatsApp ni les photos/documents. ATTENTION : c'est une donnee de sante en clair, sauf si tu mets un mot de passe. Garde-la sur un support que tu controles (cle USB chiffree, disque du cabinet), jamais dans un cloud public."));
+      const pw = inp("password", "", "Mot de passe (facultatif mais conseille)"); body.appendChild(field("Mot de passe de chiffrement", pw));
+      const dl = el("button", "btn", "Telecharger une sauvegarde"); dl.onclick = function () {
+        fetch("api/backup", { method: "POST", headers: { "Content-Type": "application/json", "X-PingChat": "1" }, body: JSON.stringify({ acc: wb.acc, pass: pw.value }) }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); }).then(function (b) { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "pingchat-sauvegarde-" + new Date().toISOString().slice(0, 10) + ".json"; document.body.appendChild(a); a.click(); a.remove(); toast(pw.value ? "Sauvegarde chiffree telechargee" : "Sauvegarde (non chiffree) telechargee"); }).catch(function (e) { toast("Echec : " + e.message); });
+      };
+      function doRestore(body2, label) {
+        if (!confirm("Restaurer " + label + " ?\n\nLes discussions, notes, rendez-vous et reglages de ce compte seront REMPLACES. Une copie de l'etat actuel est gardee avant (pre-restore).")) return;
+        wbApi("restore", Object.assign({ pass: pw.value }, body2)).then(function (r) { if (r && r.ok) { toast("Sauvegarde restauree (" + r.chats + " discussions)"); wbLoadPro(); if (typeof wbRefreshChats === "function") wbRefreshChats(); else setTimeout(function () { location.reload(); }, 800); } else toast("Echec : " + ((r && r.error) || "")); });
+      }
+      const fi = document.createElement("input"); fi.type = "file"; fi.accept = ".json"; fi.className = "hidden";
+      fi.onchange = function () { const f = fi.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = function () { doRestore({ text: String(rd.result) }, "le fichier " + f.name); }; rd.readAsText(f); };
+      const rs = el("button", "btn secondary", "Restaurer depuis un fichier..."); rs.onclick = function () { fi.click(); };
+      const bar = el("div", "pro-bar"); bar.appendChild(dl); bar.appendChild(rs); body.appendChild(bar); body.appendChild(fi);
+      body.appendChild(el("h4", "", "Sauvegardes automatiques (1 par jour, les 10 dernieres)"));
+      body.appendChild(el("p", "pro-note", "Faites quand PingChat est ouvert, dans le dossier du compte sur ce PC. Elles ne sont pas chiffrees : elles protegent d'une erreur, pas d'une panne de disque."));
+      const list = el("div", "pro-list"); body.appendChild(list);
+      wbApi("backups").then(function (r) { (r.items || []).forEach(function (b) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", (b.name.indexOf("pre-") === 0 ? "Avant restauration · " : "Auto · ") + when(b.at))); tx.appendChild(el("small", "", Math.round(b.size / 1024) + " Ko")); row.appendChild(tx); const bt = el("button", "btn secondary", "Restaurer"); bt.onclick = function () { doRestore({ file: b.name }, "cette sauvegarde"); }; row.appendChild(bt); list.appendChild(row); }); if (!(r.items || []).length) list.appendChild(el("div", "list-empty", "Pas encore de sauvegarde automatique (la premiere est faite apres 1 minute d'utilisation)")); });
     } else if (t === "lock") {
       const L = lockCfg(); body.appendChild(el("p", "pro-note", "Le code verrouille l'ecran de PingChat (demarrage et inactivite) et masque le texte des notifications. Ce n'est PAS un chiffrement : les fichiers de donnees sur le disque restent lisibles par quelqu'un qui a acces a la session Windows. Active aussi BitLocker et un mot de passe Windows."));
       body.appendChild(el("p", "", L ? "Verrouillage actif (apres " + L.mins + " min d'inactivite)." : "Aucun code defini."));
@@ -1962,6 +2032,95 @@
   if (lockCfg()) lockShow();
 
   fetch("api/version").then(function (r) { return r.json(); }).then(function (v) { if (v && v.version) $("about-line").textContent = "A propos : PingChat version " + v.version; }).catch(function () {});
+  // ---------- v1.6 : tableau de bord ----------
+  const DS_LABEL = { pending: "en attente", reminded: "rappel envoye", confirmed: "CONFIRME", cancelled: "ANNULE", past: "passe" };
+  let dashTimer = null, dashSel = "all";
+  function hm(ms) { return new Date(ms).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); }
+  function ageOf(ts) { const m = Math.round((Date.now() / 1000 - ts) / 60); return m < 60 ? m + " min" : m < 1440 ? Math.floor(m / 60) + " h" : Math.floor(m / 1440) + " j"; }
+  function dashOpen() {
+    if (!wb.on) return toast("Le tableau de bord marche avec WhatsApp Web");
+    dashSel = wb.accounts.length > 1 ? "all" : (wb.acc || "all");
+    $("dash-overlay").classList.remove("hidden"); $("dash-close").onclick = dashClose;
+    dashLoad(); clearInterval(dashTimer); dashTimer = setInterval(dashLoad, 30000);
+  }
+  function dashClose() { $("dash-overlay").classList.add("hidden"); clearInterval(dashTimer); }
+  function dashTabs() {
+    const t = $("dash-tabs"); t.innerHTML = "";
+    const mk = function (id, name) { const b = el("button", "chip" + (dashSel === id ? " active" : ""), name); b.onclick = function () { dashSel = id; dashTabs(); dashLoad(); }; t.appendChild(b); };
+    if (wb.accounts.length > 1) mk("all", "Tous les comptes");
+    wb.accounts.forEach(function (a, k) { mk(a.id, accName(a, k)); });
+  }
+  function dashLoad() {
+    dashTabs();
+    const q = dashSel === "all" ? "dashboard-all" : "dashboard?acc=" + encodeURIComponent(dashSel);
+    fetch("api/" + q).then(function (r) { return r.json(); }).then(function (r) {
+      if (!r || !r.ok) return;
+      $("dash-stamp").textContent = "Mis a jour " + hm(Date.now());
+      if (dashSel === "all") dashAll(r.items); else dashOne(r);
+    }).catch(function () { $("dash-body").textContent = "Pont injoignable"; });
+  }
+  function kpi(n, label, tone) { const k = el("div", "kpi " + (tone || "")); k.appendChild(el("b", "", String(n))); k.appendChild(el("span", "", label)); return k; }
+  function card(title, wide) { const c = el("section", "dcard" + (wide ? " wide" : "")); c.appendChild(el("h3", "", title)); return c; }
+  function empty(t) { return el("div", "list-empty", t); }
+  function stDot(s) { const i = el("i", "conn-dot " + (s === "open" ? "ok" : "off")); return i; }
+  const CONN = { open: "connecte", qr: "QR a scanner", starting: "demarrage", reconnecting: "reconnexion", logged_out: "deconnecte", error: "erreur" };
+  function dashAll(items) {
+    const b = $("dash-body"); b.innerHTML = "";
+    const g = el("div", "dgrid");
+    const tot = items.reduce(function (o, d) { o.ap += d.today.length; o.un += d.unreadTotal; o.sa += d.unansweredCount; o.sp += d.sched.pending; return o; }, { ap: 0, un: 0, sa: 0, sp: 0 });
+    const kp = el("div", "kpis wide"); kp.appendChild(kpi(tot.ap, "rendez-vous aujourd'hui")); kp.appendChild(kpi(tot.un, "messages non lus", tot.un ? "warn" : "")); kp.appendChild(kpi(tot.sa, "sans reponse", tot.sa ? "warn" : "")); kp.appendChild(kpi(tot.sp, "messages programmes")); g.appendChild(kp);
+    const c = card("Comptes", true);
+    items.forEach(function (d, k) {
+      const a = wb.accounts.find(function (x) { return x.id === d.acc; }) || {};
+      const row = el("div", "pro-item"); row.style.cursor = "pointer"; row.appendChild(stDot(d.status));
+      const tx = el("div"); tx.appendChild(el("b", "", accName(a, k) + (d.me ? " · " + d.me : ""))); tx.appendChild(el("small", "", (CONN[d.status] || d.status) + " · " + d.today.length + " rdv aujourd'hui · " + d.unreadTotal + " non lus · " + d.unansweredCount + " sans reponse · " + d.sched.pending + " programmes · reponse auto " + (d.auto.on ? "ON" : "off")));
+      row.appendChild(tx); row.onclick = function () { dashSel = d.acc; dashLoad(); }; c.appendChild(row);
+    });
+    g.appendChild(c); b.appendChild(g);
+  }
+  function openChatOf(acc, jid) {
+    dashClose();
+    const go = function () { if (getConv("x" + jid)) openConversation("x" + jid); else toast("Discussion introuvable"); };
+    if (acc !== wb.acc) { wbSwitch(acc); setTimeout(go, 2000); } else go();
+  }
+  function dashOne(d) {
+    const b = $("dash-body"); b.innerHTML = "";
+    const g = el("div", "dgrid");
+    const kp = el("div", "kpis wide");
+    kp.appendChild(kpi(d.today.length, "rendez-vous aujourd'hui")); kp.appendChild(kpi(d.unreadTotal, "messages non lus (" + d.unreadChats + " disc.)", d.unreadTotal ? "warn" : ""));
+    kp.appendChild(kpi(d.unansweredCount, "sans reponse (7 j)", d.unansweredCount ? "warn" : "")); kp.appendChild(kpi(d.sched.pending, "programmes en attente" + (d.sched.missed ? " · " + d.sched.missed + " manques" : ""), d.sched.missed ? "bad" : ""));
+    g.appendChild(kp);
+    // agenda du jour
+    let c = card("Agenda du jour"); if (!d.today.length) c.appendChild(empty("Aucun rendez-vous aujourd'hui"));
+    d.today.forEach(function (a) { const r = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", hm(a.at) + " · " + a.name)); if (a.note) tx.appendChild(el("small", "", a.note)); r.appendChild(tx); r.appendChild(el("span", "list-badge st-" + a.status, DS_LABEL[a.status] || a.status)); c.appendChild(r); }); g.appendChild(c);
+    c = card("A venir (7 jours)"); if (!d.upcoming.length) c.appendChild(empty("Rien de prevu"));
+    d.upcoming.forEach(function (a) { const r = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", when(a.at) + " · " + a.name)); r.appendChild(tx); r.appendChild(el("span", "list-badge st-" + a.status, DS_LABEL[a.status] || a.status)); c.appendChild(r); }); g.appendChild(c);
+    // discussions
+    c = card("Non lus"); if (!d.unread.length) c.appendChild(empty("Tout est lu"));
+    d.unread.forEach(function (u) { const r = el("div", "pro-item"); r.style.cursor = "pointer"; const tx = el("div"); tx.appendChild(el("b", "", u.name)); tx.appendChild(el("small", "", u.unread + " non lu(s) · il y a " + ageOf(u.ts))); r.appendChild(tx); r.onclick = function () { openChatOf(d.acc, u.jid); }; c.appendChild(r); }); g.appendChild(c);
+    c = card("Sans reponse (dernier message du patient)"); if (!d.unanswered.length) c.appendChild(empty("Rien en attente"));
+    d.unanswered.forEach(function (u) { const r = el("div", "pro-item"); r.style.cursor = "pointer"; const tx = el("div"); tx.appendChild(el("b", "", u.name + " · il y a " + ageOf(u.ts))); tx.appendChild(el("small", "", u.text)); r.appendChild(tx); r.onclick = function () { openChatOf(d.acc, u.jid); }; c.appendChild(r); }); g.appendChild(c);
+    // programmes
+    c = card("Messages programmes"); c.appendChild(el("p", "pro-note", d.sched.pending + " en attente · " + d.sched.missed + " manques · " + d.sched.failed + " en echec"));
+    d.sched.next.forEach(function (s) { const r = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", when(s.at) + " · " + s.name)); tx.appendChild(el("small", "", s.text)); r.appendChild(tx); c.appendChild(r); }); g.appendChild(c);
+    // automatisations
+    c = card("Automatisations");
+    [["Reponse auto hors horaires", d.auto.on ? "ON" + (d.auto.open ? " (cabinet ouvert maintenant)" : " (cabinet ferme maintenant)") : "OFF"], ["Rappels de rendez-vous", d.auto.reminderHours + " h avant"], ["PC qui les execute", d.auto.pc + " (seulement quand PingChat est ouvert et connecte ici)"], ["Connexion", (CONN[d.status] || d.status) + (d.me ? " · " + d.me : "")]].forEach(function (x) { const r = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", x[0])); tx.appendChild(el("small", "pro-why", x[1])); r.appendChild(tx); c.appendChild(r); }); g.appendChild(c);
+    // etiquettes
+    c = card("Patients par etiquette"); if (!d.labels.length) c.appendChild(empty("Aucune etiquette (Cabinet > Etiquettes)"));
+    const mx = Math.max(1, Math.max.apply(null, d.labels.map(function (l) { return l.n; })));
+    d.labels.forEach(function (l) { const r = el("div", "bar-row"); r.appendChild(el("span", "bar-l", l.name)); const t = el("div", "bar-t"); const f = el("div", "bar-f"); f.style.width = Math.round(100 * l.n / mx) + "%"; f.style.background = l.color; t.appendChild(f); r.appendChild(t); r.appendChild(el("b", "", String(l.n))); c.appendChild(r); }); g.appendChild(c);
+    // semaine
+    c = card("Semaine (7 jours)", true);
+    const mm = Math.max(1, Math.max.apply(null, d.days.map(function (x) { return Math.max(x.in, x.out); })));
+    const ch = el("div", "wk-chart");
+    d.days.forEach(function (x) { const col = el("div", "wk-col"); const bars = el("div", "wk-bars"); const bi = el("i", "wk-in"); bi.style.height = Math.round(100 * x.in / mm) + "%"; bi.title = x.in + " recus"; const bo = el("i", "wk-out"); bo.style.height = Math.round(100 * x.out / mm) + "%"; bo.title = x.out + " envoyes"; bars.appendChild(bi); bars.appendChild(bo); col.appendChild(bars); col.appendChild(el("small", "", new Date(x.t).toLocaleDateString("fr-FR", { weekday: "short" }))); col.appendChild(el("small", "wk-n", x.in + "/" + x.out)); ch.appendChild(col); });
+    c.appendChild(ch); c.appendChild(el("p", "pro-note", "Barres : messages recus (indigo) / envoyes (corail) par jour, discussions individuelles, seulement ce que PingChat a vu."));
+    const kw = el("div", "kpis"); kw.appendChild(kpi(d.week.reminded, "rappels envoyes")); kw.appendChild(kpi(d.week.confirmed, "confirmations", "good")); kw.appendChild(kpi(d.week.cancelled, "annulations", d.week.cancelled ? "warn" : "")); kw.appendChild(kpi(d.week.noReply, "sans reponse au rappel", d.week.noReply ? "warn" : ""));
+    c.appendChild(kw); g.appendChild(c);
+    b.appendChild(g);
+  }
+
   // ---------- Demarrage ----------
   paintSettings();
   renderStories();

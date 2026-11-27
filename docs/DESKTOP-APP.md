@@ -53,3 +53,10 @@ Ligne "A propos : PingChat version X" en bas du menu parametres (lue depuis la v
 
 ## v1.5.2
 Rendez-vous : correction de la detection des reponses (l'horloge du telephone n'est plus comparee, @lid resolu, discussion avec soi-meme, plus de formes de oui/non dont arabe et emoji, un patient peut changer sa reponse) et journal des reponses ignorees dans l'onglet Rendez-vous.
+
+## v1.6.0
+- Menu > "Tableau de bord" : agenda du jour, a venir (7 j), non lus, sans reponse, messages programmes, automatisations, etiquettes, graphique 7 jours, stats de la semaine. Par compte, plus une vue "Tous les comptes". Calcule en local, rien ne sort du PC.
+- Messages vocaux : le micro enregistre en WebM/Opus, le pont le remballe en Ogg/Opus (note vocale WhatsApp) puis l'envoie. NON verifie sur un vrai telephone.
+- Cabinet > Agenda : un jour a la fois, rendez-vous et messages programmes, statut Confirme/Annule change a la main (rien n'est envoye).
+- Chat > "Note privee" : note par patient dans pro.json, jamais envoyee.
+- Cabinet > Sauvegarde : export JSON (mot de passe AES-256-GCM facultatif), restauration (copie "pre-restore" gardee avant), sauvegarde automatique quotidienne gzip (10 dernieres) dans `accounts\<id>\backups`. Ne contient ni la session WhatsApp ni les medias.
