@@ -663,7 +663,7 @@ function createAccount(id, dir) {
   const isOpenAt = (ms) => { const d = new Date(ms); const day = pro.auto.days.find((x) => x.d === d.getDay()); if (!day || !day.on) return false; const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); return hm >= day.start && hm < day.end; };
   // cle de l'absence en cours = instant (arrondi 15 min) ou le cabinet a ferme pour la derniere fois
   const absenceKey = (now) => { for (let t = now, i = 0; i < 8 * 96; i++, t -= 15 * 60000) if (isOpenAt(t)) return String(Math.floor(t / 900000)); return 'long'; };
-  const proPublic = () => ({ quick: pro.quick, auto: { on: pro.auto.on, text: pro.auto.text, days: pro.auto.days }, labels: pro.labels, remind: pro.remind, brand: pro.brand, vacation: { on: pro.vacation.on, until: pro.vacation.until, text: pro.vacation.text }, open: isOpenAt(Date.now()) });
+  const proPublic = () => ({ quick: pro.quick, auto: { on: pro.auto.on, text: pro.auto.text, days: pro.auto.days }, labels: pro.labels, remind: pro.remind, types: pro.types, brand: pro.brand, vacation: { on: pro.vacation.on, until: pro.vacation.until, text: pro.vacation.text }, open: isOpenAt(Date.now()) });
   function proSet(key, v) {
     if (key === 'quick') pro.quick = (Array.isArray(v) ? v : []).slice(0, 100).map((q) => ({ k: str(q.k, 30).replace(/^\//, '').replace(/\s+/g, '').toLowerCase(), text: str(q.text, 2000) })).filter((q) => q.k && q.text);
     else if (key === 'auto') {
@@ -674,7 +674,8 @@ function createAccount(id, dir) {
       pro.labels = (Array.isArray(v) ? v : []).slice(0, 30).map((l) => ({ id: str(l.id, 20).replace(/[^\w-]/g, '') || 'l' + Math.random().toString(36).slice(2, 7), name: str(l.name, 30), color: /^#[0-9a-fA-F]{6}$/.test(l.color) ? l.color : '#7c5cd6' })).filter((l) => l.name);
       const ok = new Set(pro.labels.map((l) => l.id)); for (const j of Object.keys(pro.tagged)) { pro.tagged[j] = pro.tagged[j].filter((x) => ok.has(x)); if (!pro.tagged[j].length) delete pro.tagged[j]; }
     } else if (key === 'remind') { pro.remind.hours = Math.min(168, Math.max(1, Number(v.hours) || 24)); pro.remind.text = str(v.text, 600) || pro.remind.text; pro.remind.hours2 = Math.min(pro.remind.hours - 1, Math.max(0, Number(v.hours2) || 0)); if (pro.remind.hours2 < 1) pro.remind.hours2 = 0; }
-    else if (key === 'brand') pro.brand = { name: str(v.name, 60) };
+    else if (key === 'types') pro.types = (Array.isArray(v) ? v : []).slice(0, 20).map((t) => ({ id: str(t.id, 20).replace(/[^\w-]/g, '') || 't' + Math.random().toString(36).slice(2, 7), name: str(t.name, 40), text: str(t.text, 600) })).filter((t) => t.name && t.text);
+    else if (key === 'brand') pro.brand = { name: str(v.name, 60), color: /^#[0-9a-fA-F]{6}$/.test(String(v.color || '')) ? String(v.color) : '', logo: /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(String(v.logo || '')) && String(v.logo).length < 250000 ? String(v.logo) : '' };
     else if (key === 'vacation') { const u = /^\d{4}-\d{2}-\d{2}$/.test(String(v.until || '')) ? String(v.until) : ''; pro.vacation = { on: !!v.on && !!u, until: u, text: str(v.text, 1000) || pro.vacation.text }; pro.vacation.notified = {}; }
     else throw Object.assign(new Error('reglage inconnu'), { code: 400 });
     proSave(); emit('pro', {}); return proPublic();
@@ -685,6 +686,7 @@ function createAccount(id, dir) {
     if (set.size) pro.tagged[jid] = [...set]; else delete pro.tagged[jid];
     proSave(); emit('chat', chatView(jid)); return { tags: pro.tagged[jid] || [] };
   }
+  const typeText = (a) => (a.type && pro.types.find((t) => t.id === a.type)?.text) || pro.remind.text;
   const fill = (tpl, a) => tpl.replace(/\{nom\}/g, /^[+\d]/.test(a.name || '') ? '' : (a.name || '')).replace(/\s+([,.!?])/g, '$1').replace(/  +/g, ' ').replace(/\{date\}/g, new Date(a.at).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })).replace(/\{heure\}/g, new Date(a.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
   function schedAdd(rawJid, text, at) {
     const jid = canon(rawJid); text = str(text, 4000).trim(); at = Number(at);
@@ -694,10 +696,10 @@ function createAccount(id, dir) {
     const s = { id: 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), jid, name: nameOf(jid), text, at, status: 'pending' }; pro.sched.push(s); proSave(); emit('pro', {}); return s;
   }
   const schedDel = (id) => { const s = pro.sched.find((x) => x.id === id); if (s && s.status === 'pending') s.status = 'cancelled'; else pro.sched = pro.sched.filter((x) => x.id !== id); proSave(); emit('pro', {}); };
-  function apptAdd(rawJid, at, note) {
+  function apptAdd(rawJid, at, note, type) {
     const jid = canon(rawJid); at = Number(at);
     if (!isFinite(at) || at < Date.now() - 60000) throw Object.assign(new Error('Date invalide ou passee'), { code: 400 });
-    const a = { id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), jid, name: nameOf(jid), at, note: str(note, 200), status: 'pending', remindedAt: 0, reply: null }; pro.appts.push(a); proSave(); emit('pro', {}); return a;
+    const a = { id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), jid, name: nameOf(jid), at, note: str(note, 200), type: pro.types.some((t) => t.id === type) ? type : '', status: 'pending', remindedAt: 0, reply: null }; pro.appts.push(a); proSave(); emit('pro', {}); return a;
   }
   const apptDel = (id) => { pro.appts = pro.appts.filter((x) => x.id !== id); proSave(); emit('pro', {}); };
 
@@ -708,6 +710,7 @@ function createAccount(id, dir) {
     a.status = status; a.manual = true; proSave(); emit('pro', {}); return a;
   };
   pro.notes = pro.notes && typeof pro.notes === 'object' ? pro.notes : {};
+  pro.types = Array.isArray(pro.types) ? pro.types : [];
   pro.vacation = { on: false, until: '', text: "Bonjour, le cabinet est en conge jusqu'au {date}. Nous vous repondrons a notre retour. En cas d'urgence, appelez le 15 (SAMU).", notified: {}, ...(pro.vacation || {}) };
   pro.remind.hours2 = Number(pro.remind.hours2) || 0;
   const vacActive = (now) => pro.vacation.on && pro.vacation.until && now < new Date(pro.vacation.until + 'T23:59:59').getTime();
@@ -726,7 +729,7 @@ function createAccount(id, dir) {
   // ---------- v1.6.2 : bibliotheque de fichiers (ordonnances types, consignes), identite du cabinet ----------
   const LIB_DIR = path.join(dir, 'library');
   pro.library = Array.isArray(pro.library) ? pro.library : [];
-  pro.brand = { name: '', ...(pro.brand || {}) };
+  pro.brand = { name: '', color: '', logo: '', ...(pro.brand || {}) };
   function libAdd(o) {
     const buf = Buffer.from(String(o.data || ''), 'base64'); const name = str(o.name, 120).replace(/[\\/:*?"<>|]/g, '_') || 'fichier';
     if (!buf.length || buf.length > 20 * 1024 * 1024) throw Object.assign(new Error('Fichier vide ou trop gros (20 Mo max)'), { code: 400 });
@@ -741,6 +744,30 @@ function createAccount(id, dir) {
     const it = pro.library.find((x) => x.id === id); if (!it) throw Object.assign(new Error('fichier introuvable'), { code: 404 });
     const data = fs.readFileSync(path.join(LIB_DIR, it.id + '.bin')).toString('base64');
     return sendMedia(rawJid, { kind: it.mime.startsWith('image/') ? 'image' : 'document', mime: it.mime, name: it.name, data });
+  }
+  // ---------- v1.6.3 : import de patients (CSV) : noms locaux, etiquettes, rendez-vous. N'envoie rien. ----------
+  function normPhone(x) {
+    let d = String(x || '').replace(/[^\d+]/g, ''); if (d.startsWith('+')) d = d.slice(1); else if (d.startsWith('00')) d = d.slice(2);
+    else if (/^0\d{9}$/.test(d)) d = '212' + d.slice(1);       // numero marocain 06/07/05...
+    else if (/^[5-7]\d{8}$/.test(d)) d = '212' + d;
+    return /^\d{8,15}$/.test(d) ? d : '';
+  }
+  function importPatients(rows) {
+    if (!Array.isArray(rows) || !rows.length) throw Object.assign(new Error('Aucune ligne'), { code: 400 });
+    if (rows.length > 2000) throw Object.assign(new Error('2000 lignes max par import'), { code: 400 });
+    const res = { added: 0, names: 0, tagged: 0, appts: 0, skipped: [] }; const seen = new Set();
+    rows.forEach((r, i) => {
+      const ph = normPhone(r.phone); const name = str(r.name, 60).trim();
+      if (!ph) { res.skipped.push({ line: i + 1, why: 'numero invalide' }); return; }
+      if (seen.has(ph)) { res.skipped.push({ line: i + 1, why: 'doublon dans le fichier' }); return; }
+      seen.add(ph); const jid = ph + '@s.whatsapp.net'; res.added++;
+      if (name) { contacts.set(jid, name); res.names++; }
+      const lab = str(r.label, 30).trim();
+      if (lab) { let l = pro.labels.find((x) => x.name.toLowerCase() === lab.toLowerCase()); if (!l && pro.labels.length < 30) { l = { id: 'l' + Math.random().toString(36).slice(2, 7), name: lab, color: '#7c6cf0' }; pro.labels.push(l); } if (l) { const set = new Set(pro.tagged[jid] || []); set.add(l.id); pro.tagged[jid] = [...set]; res.tagged++; } }
+      const at = Number(r.at);
+      if (isFinite(at) && at > Date.now() && !pro.appts.some((a) => a.jid === jid && a.at === at)) { pro.appts.push({ id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), jid, name: name || nameOf(jid), at, note: str(r.note, 200), type: '', status: 'pending', remindedAt: 0, reply: null }); res.appts++; }
+    });
+    saveSoon(); proSave(); emit('pro', {}); emit('chats', {}); return res;
   }
   const BK_DIR = path.join(dir, 'backups');
   function backupPayload() {
@@ -789,7 +816,7 @@ function createAccount(id, dir) {
     pro = { ...proDefault(), ...o.pro, auto: { ...proDefault().auto, ...(o.pro.auto || {}) }, remind: { ...proDefault().remind, ...(o.pro.remind || {}) } };
     pro.log = Array.isArray(pro.log) ? pro.log : []; pro.notes = pro.notes && typeof pro.notes === 'object' ? pro.notes : {};
     pro.vacation = { on: false, until: '', text: pro.vacation?.text || '', ...(pro.vacation || {}), notified: {} }; pro.remind.hours2 = Number(pro.remind.hours2) || 0;
-    pro.library = (Array.isArray(pro.library) ? pro.library : []).filter((x) => fs.existsSync(path.join(LIB_DIR, x.id + '.bin'))); pro.brand = { name: '', ...(pro.brand || {}) };
+    pro.library = (Array.isArray(pro.library) ? pro.library : []).filter((x) => fs.existsSync(path.join(LIB_DIR, x.id + '.bin'))); pro.brand = { name: '', color: '', logo: '', ...(pro.brand || {}) }; pro.types = Array.isArray(pro.types) ? pro.types : [];
     try { fs.writeFileSync(PRO_FILE, JSON.stringify(pro)); fs.writeFileSync(STORE_FILE, JSON.stringify({ chats: [...chats], msgs: [...msgs], contacts: [...contacts], notifies: [...notifies], lidPn: [...lidPn] })); } catch {}
     emit('chats', {}); emit('pro', {}); return { chats: chats.size };
   }
@@ -874,12 +901,12 @@ function createAccount(id, dir) {
       if (a.status === 'pending' && a.at < now - 3600000) { a.status = a.reply || 'past'; dirty = true; continue; }
       if (a.remindedAt && !a.reminded2At && pro.remind.hours2 > 0 && !a.reply && a.status === 'reminded' && a.at > now && a.at - now <= pro.remind.hours2 * 3600000 && now - a.remindedAt > 3600000 && state.status === 'open' && sock) {
         a.reminded2At = now; dirty = true;
-        try { const sent = noteSent(await sock.sendMessage(a.jid, { text: fill(pro.remind.text, a) })); addMessage(sent, true); } catch (e) { a.reminded2At = 0; a.error = String(e.message || e).slice(0, 100); }
+        try { const sent = noteSent(await sock.sendMessage(a.jid, { text: fill(typeText(a), a) })); addMessage(sent, true); } catch (e) { a.reminded2At = 0; a.error = String(e.message || e).slice(0, 100); }
         continue;
       }
       if (a.remindedAt || a.at <= now || a.at - now > pro.remind.hours * 3600000) continue;
       if (state.status !== 'open' || !sock) continue;
-      try { const sent = noteSent(await sock.sendMessage(a.jid, { text: fill(pro.remind.text, a) })); addMessage(sent, true); a.remindedAt = Date.now(); a.status = 'reminded'; } catch (e) { a.error = String(e.message || e).slice(0, 100); }
+      try { const sent = noteSent(await sock.sendMessage(a.jid, { text: fill(typeText(a), a) })); addMessage(sent, true); a.remindedAt = Date.now(); a.status = 'reminded'; } catch (e) { a.error = String(e.message || e).slice(0, 100); }
       dirty = true;
     }
     if (dirty) { proSave(); emit('pro', {}); }
@@ -930,7 +957,7 @@ function createAccount(id, dir) {
     chatList: () => [...chats.keys()].map(chatView).filter((c) => c.ts || c.last).sort((a, b) => b.ts - a.ts),
     messages: (jid) => { jid = canon(jid); const ch = chats.get(jid); if (ch) { ch.unread = 0; saveSoon(); emit('chat', chatView(jid)); } markRead(jid); if (!isGroup(jid) && sock && state.status === 'open') sock.presenceSubscribe(jid).catch(() => {}); return (msgs.get(jid) || []).filter((m) => !m.hidden); },
     deleteForAll, deleteForMe, editMsg, forward, star, starred, search, groupInfo, typing, avatar,
-    proPublic, proSet, waLink, libAdd, libDel, libSend, libList: () => pro.library, brandGet: () => pro.brand, apptSet, noteGet, noteSet, noteJids: () => Object.keys(pro.notes), backupMake, backupRestoreText, backupRestoreFile, backupList, backupAutoTick, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), proLog: () => pro.log.slice().reverse(), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, dashboard, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
+    proPublic, proSet, importPatients, waLink, libAdd, libDel, libSend, libList: () => pro.library, brandGet: () => pro.brand, apptSet, noteGet, noteSet, noteJids: () => Object.keys(pro.notes), backupMake, backupRestoreText, backupRestoreFile, backupList, backupAutoTick, tagChat, schedAdd, schedDel, apptAdd, apptDel, schedList: () => pro.sched.slice(-300), proLog: () => pro.log.slice().reverse(), apptList: () => pro.appts.slice(-300), _proTick: proTick, _pro: () => pro, dashboard, chatFlag, gallery, sendLocation, statusList, postStatus, deleteStatus, groupCreate, groupManage,
     send, sendMedia, react, rejectCall, mediaFile,
     logout: async () => { try { await sock?.logout(); } catch {} },
   };
@@ -1181,12 +1208,13 @@ const server = http.createServer(async (req, res) => {
       catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); }
     }
     if (p === '/api/appts') { const a = A(); return json(res, 200, { ok: true, items: a ? a.apptList() : [] }); }
-    if (req.method === 'POST' && ['/api/pro-set', '/api/tag-chat', '/api/sched-add', '/api/sched-del', '/api/appt-add', '/api/appt-del', '/api/appt-set', '/api/note', '/api/lib-del', '/api/lib-send'].includes(p)) {
-      const b = await readBody(req); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
+    if (req.method === 'POST' && ['/api/pro-set', '/api/tag-chat', '/api/sched-add', '/api/sched-del', '/api/appt-add', '/api/appt-del', '/api/appt-set', '/api/note', '/api/lib-del', '/api/lib-send', '/api/import'].includes(p)) {
+      const b = await readBody(req, 700000); const a = accounts.get(b.acc || meta[0]?.id); if (!a) return json(res, 404, { ok: false });
       const w = async (fn) => { try { return json(res, 200, { ok: true, ...(await fn()) }); } catch (e) { return json(res, e.code || 500, { ok: false, error: String(e.message || e) }); } };
       const jidOk = /^[\w.:-]+@(s\.whatsapp\.net|g\.us|lid)$/.test(String(b.jid || ''));
       if (p === '/api/pro-set') return w(() => ({ pro: a.proSet(String(b.key || ''), b.value || {}) }));
       if (p === '/api/sched-del') return w(() => { a.schedDel(String(b.id || '')); return {}; });
+      if (p === '/api/import') return w(() => ({ result: a.importPatients(b.rows) }));
       if (p === '/api/lib-del') return w(() => { a.libDel(String(b.id || '')); return {}; });
       if (p === '/api/appt-set') return w(() => ({ item: a.apptSet(String(b.id || ''), String(b.status || '')) }));
       if (p === '/api/appt-del') return w(() => { a.apptDel(String(b.id || '')); return {}; });
@@ -1195,7 +1223,7 @@ const server = http.createServer(async (req, res) => {
       if (p === '/api/note') return w(() => ({ note: a.noteSet(b.jid, b.text) }));
       if (p === '/api/tag-chat') return w(() => a.tagChat(b.jid, String(b.tag || ''), !!b.on));
       if (p === '/api/sched-add') return w(() => ({ item: a.schedAdd(b.jid, b.text, b.at) }));
-      if (p === '/api/appt-add') return w(() => ({ item: a.apptAdd(b.jid, b.at, b.note) }));
+      if (p === '/api/appt-add') return w(() => ({ item: a.apptAdd(b.jid, b.at, b.note, String(b.type || '')) }));
     }
     if (p === '/api/starred') { const a = A(); return json(res, 200, { ok: true, items: a ? a.starred() : [] }); }
     if (p === '/api/search') { const a = A(); return json(res, 200, { ok: true, items: a ? a.search(url.searchParams.get('q'), { name: url.searchParams.get('name'), from: url.searchParams.get('from'), to: url.searchParams.get('to') }) : [] }); }

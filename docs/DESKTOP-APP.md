@@ -71,3 +71,8 @@ Rendez-vous : correction de la detection des reponses (l'horloge du telephone n'
 - Cabinet > Fichiers : bibliotheque de documents types (max 50, 20 Mo), envoi d'un fichier a UN patient apres confirmation. Stockee dans `accounts\<id>\library`. Pas dans la sauvegarde (seulement la liste).
 - Cabinet > Recherche : mot, nom/numero du contact, dates.
 - Cabinet > Rapport : resume 7 jours copiable/imprimable, nom du cabinet (en-tete du rapport et des exports).
+
+## v1.6.3
+- Cabinet > Types de rdv : message de rappel par type de rendez-vous (choisi a l'ajout du rdv).
+- Cabinet > Import : CSV (nom, telephone, etiquette, rdv, motif). N'envoie rien. Noms locaux, etiquettes, rdv a venir. Numeros 06/07 convertis en +212. Excel : Enregistrer sous CSV.
+- Cabinet > Identite : nom, couleur principale (par compte) et logo (tableau de bord, exports). Reste local.

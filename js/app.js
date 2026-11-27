@@ -1233,6 +1233,34 @@
       if (!r || !r.ok) toast("Reaction non envoyee : " + ((r && r.error) || "echec"));
     });
   }
+  function applyBrand() {
+    const b = (wb.pro && wb.pro.brand) || {}; const st = document.documentElement.style;
+    if (b.color) st.setProperty("--accent", b.color); else st.removeProperty("--accent");
+  }
+  function parseCSV(text) {
+    text = text.replace(/^\uFEFF/, ""); const first = text.split(/\r?\n/)[0] || ""; const sep = (first.match(/;/g) || []).length > (first.match(/,/g) || []).length ? ";" : (first.indexOf("\t") >= 0 ? "\t" : ",");
+    const rows = []; let row = [], cur = "", q = false;
+    for (let i = 0; i < text.length; i++) { const ch = text[i];
+      if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+      else if (ch === '"') q = true; else if (ch === sep) { row.push(cur); cur = ""; } else if (ch === "\n" || ch === "\r") { if (ch === "\r" && text[i + 1] === "\n") i++; row.push(cur); cur = ""; if (row.some(function (x) { return x.trim(); })) rows.push(row); row = []; } else cur += ch; }
+    row.push(cur); if (row.some(function (x) { return x.trim(); })) rows.push(row); return rows;
+  }
+  function csvToPatients(rows) {
+    const norm = function (x) { return String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, ""); };
+    const H = rows[0].map(norm); const find = function (names) { for (let i = 0; i < H.length; i++) if (names.indexOf(H[i]) >= 0) return i; return -1; };
+    const ci = { name: find(["nom", "name", "patient", "nomprenom", "nomcomplet"]), phone: find(["telephone", "tel", "phone", "numero", "gsm", "mobile", "whatsapp"]), label: find(["etiquette", "label", "tag", "categorie"]), at: find(["rdv", "rendezvous", "date", "daterdv", "datetime"]), note: find(["motif", "note", "remarque"]) };
+    if (ci.phone < 0) return { error: "Colonne telephone introuvable (titres reconnus : telephone, tel, phone, numero, gsm, mobile)." };
+    const out = rows.slice(1).map(function (r) { const g = function (i) { return i >= 0 ? (r[i] || "").trim() : ""; }; let at = 0; const d = g(ci.at); if (d) { let m = /^(\d{4})-(\d{2})-(\d{2})[ T]?(\d{1,2})?:?(\d{2})?/.exec(d) || null; let dt = null; if (m) dt = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 9), +(m[5] || 0)); else { m = /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})[ T]?(\d{1,2})?:?(\d{2})?/.exec(d); if (m) dt = new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 9), +(m[5] || 0)); } if (dt && !isNaN(dt)) at = dt.getTime(); } return { name: g(ci.name), phone: g(ci.phone), label: g(ci.label), at: at, note: g(ci.note) }; });
+    return { rows: out, cols: ci };
+  }
+  function csvPreview(text, out) {
+    out.innerHTML = ""; const rows = parseCSV(text); if (rows.length < 2) { out.appendChild(el("p", "pro-note", "Fichier vide ou une seule ligne.")); return; }
+    const r = csvToPatients(rows); if (r.error) { out.appendChild(el("p", "pro-note", r.error)); return; }
+    const nAt = r.rows.filter(function (x) { return x.at > Date.now(); }).length;
+    out.appendChild(el("p", "pro-note", r.rows.length + " ligne(s) lues dont " + nAt + " rendez-vous a venir. Apercu des 5 premieres :"));
+    r.rows.slice(0, 5).forEach(function (x) { const row = el("div", "pro-item"); const tx = el("div"); tx.appendChild(el("b", "", (x.name || "(sans nom)") + " · " + x.phone)); tx.appendChild(el("small", "", (x.label ? "Etiquette : " + x.label + " · " : "") + (x.at ? "RDV : " + when(x.at) : ""))); row.appendChild(tx); out.appendChild(row); });
+    const go = el("button", "btn", "Importer " + r.rows.length + " patient(s)"); go.onclick = function () { if (!confirm("Importer " + r.rows.length + " ligne(s) dans le compte " + accNameById(wb.acc) + " ?\n\nAucun message n'est envoye. Les rappels de rendez-vous partiront automatiquement a l'heure prevue (si PingChat est ouvert).")) return; go.disabled = true; wbApi("import", { rows: r.rows }).then(function (x) { go.disabled = false; if (!x || !x.ok) return toast("Echec : " + ((x && x.error) || "")); const R = x.result; out.innerHTML = ""; out.appendChild(el("p", "pro-note", R.added + " patient(s) importes, " + R.names + " nom(s), " + R.tagged + " etiquette(s), " + R.appts + " rendez-vous." + (R.skipped.length ? " Ignores : " + R.skipped.slice(0, 8).map(function (s) { return "ligne " + s.line + " (" + s.why + ")"; }).join(", ") + (R.skipped.length > 8 ? "..." : "") : ""))); wbLoadPro(); wbRefreshChats(); }); }; out.appendChild(go);
+  }
   function wbExportChat(conv) {
     if (!conv.wb) return toast("Export disponible avec WhatsApp Web");
     if (!confirm("Exporter cette discussion en fichier HTML imprimable (a ouvrir puis Ctrl+P > Enregistrer au format PDF) ?\n\nLe fichier contient des donnees patient en clair : garde-le sur un support que tu controles.")) return;
@@ -1240,7 +1268,7 @@
     wbApi("messages?jid=" + encodeURIComponent(conv.jid)).then(function (r) {
       const list = (r && (r.messages || r.items)) || [];
       if (!list.length) return toast("Rien a exporter");
-      let h = "<!doctype html><meta charset=utf-8><title>" + esc(conv.name) + "</title><style>body{font:14px Arial,sans-serif;max-width:700px;margin:20px auto}h1{font-size:20px}.m{margin:6px 0;padding:6px 10px;border-radius:8px;background:#eee;page-break-inside:avoid}.me{background:#dcf8c6;margin-left:60px}.t{color:#666;font-size:11px}</style><h1>" + esc((wb.pro && wb.pro.brand && wb.pro.brand.name) ? wb.pro.brand.name + " : " : "") + "Discussion avec " + esc(conv.name) + "</h1><p class=t>Exportee le " + esc(new Date().toLocaleString("fr-FR")) + " depuis PingChat. Document confidentiel.</p>";
+      let h = "<!doctype html><meta charset=utf-8><title>" + esc(conv.name) + "</title><style>body{font:14px Arial,sans-serif;max-width:700px;margin:20px auto}h1{font-size:20px}.m{margin:6px 0;padding:6px 10px;border-radius:8px;background:#eee;page-break-inside:avoid}.me{background:#dcf8c6;margin-left:60px}.t{color:#666;font-size:11px}</style>" + ((wb.pro && wb.pro.brand && wb.pro.brand.logo) ? "<img src='" + wb.pro.brand.logo + "' height=48>" : "") + "<h1>" + esc((wb.pro && wb.pro.brand && wb.pro.brand.name) ? wb.pro.brand.name + " : " : "") + "Discussion avec " + esc(conv.name) + "</h1><p class=t>Exportee le " + esc(new Date().toLocaleString("fr-FR")) + " depuis PingChat. Document confidentiel.</p>";
       list.forEach(function (m) { const ts = m.ts ? new Date(m.ts * 1000).toLocaleString("fr-FR") : ""; const body = m.text || m.caption || (m.type ? "[" + m.type + "]" : "") || (m.media ? "[" + (m.media.name || "media") + "]" : ""); h += "<div class='m" + (m.fromMe ? " me" : "") + "'><div class=t>" + esc(m.fromMe ? "Moi" : conv.name) + " · " + esc(ts) + "</div>" + esc(body).replace(/\n/g, "<br>") + "</div>"; });
       const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([h], { type: "text/html" })); a.download = "discussion-" + String(conv.name).replace(/[^\w-]+/g, "_") + ".html"; document.body.appendChild(a); a.click(); a.remove(); toast("Discussion exportee (" + list.length + " messages)");
     });
@@ -1829,7 +1857,7 @@
   // ---------- v1.5 : outils cabinet ----------
   function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function wbLoadPro() {
-    return wbApi("pro").then(function (r) { if (r && r.ok) { wb.pro = r; wbPaintTagChips(); renderChatList(); if (!$("pro-overlay").classList.contains("hidden") && wb.proTab) proTab(wb.proTab, true); } });
+    return wbApi("pro").then(function (r) { if (r && r.ok) { wb.pro = r; applyBrand(); wbPaintTagChips(); renderChatList(); if (!$("pro-overlay").classList.contains("hidden") && wb.proTab) proTab(wb.proTab, true); } });
   }
   function labelOf(id) { return ((wb.pro && wb.pro.labels) || []).find(function (l) { return l.id === id; }); }
   function wbPaintTagChips() {
@@ -1883,7 +1911,7 @@
   })();
 
   // panneau Cabinet
-  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["agenda", "Agenda"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["lib", "Fichiers"], ["find", "Recherche"], ["report", "Rapport"], ["vac", "Conge"], ["link", "Lien / QR"], ["backup", "Sauvegarde"], ["share", "Poste partage"]];
+  const PRO_TABS = [["quick", "Reponses rapides"], ["auto", "Absence"], ["tags", "Etiquettes"], ["sched", "Programmes"], ["agenda", "Agenda"], ["appts", "Rendez-vous"], ["lock", "Verrouillage"], ["types", "Types de rdv"], ["import", "Import"], ["brand", "Identite"], ["lib", "Fichiers"], ["find", "Recherche"], ["report", "Rapport"], ["vac", "Conge"], ["link", "Lien / QR"], ["backup", "Sauvegarde"], ["share", "Poste partage"]];
   function proOpen(tab, preJid) {
     if (!wb.on) return toast("Les outils cabinet marchent avec WhatsApp Web");
     wb.proPre = preJid || null;
@@ -1945,7 +1973,7 @@
     } else if (t === "appts") {
       body.appendChild(el("p", "pro-note", "Un rappel est envoye automatiquement avant le rendez-vous (PingChat doit etre ouvert a ce moment). Si le patient repond OUI/OK/confirme (ou NON/annule), le statut change. Detection par mots-cles : une reponse ambigue reste « rappel envoye »."));
       const sel = chatSelect(wb.proPre); const dt = inp("datetime-local", ""); const note = inp("text", "", "Motif (facultatif)"); body.appendChild(field("Patient", sel)); body.appendChild(field("Date et heure", dt)); body.appendChild(field("Note", note));
-      const go = el("button", "btn", "Ajouter le rendez-vous"); go.onclick = function () { if (!sel.value || !dt.value) return toast("Patient et date obligatoires"); wbApi("appt-add", { jid: sel.value, at: new Date(dt.value).getTime(), note: note.value }).then(function (r) { if (r && r.ok) { toast("Rendez-vous ajoute"); proTab("appts"); } else toast("Echec : " + ((r && r.error) || "")); }); }; body.appendChild(go);
+      const tsel = el("select", "ask-input"); tsel.appendChild(new Option("Rappel standard", "")); (P.types || []).forEach(function (x) { tsel.appendChild(new Option(x.name, x.id)); }); if ((P.types || []).length) body.appendChild(field("Type (message de rappel)", tsel)); const go = el("button", "btn", "Ajouter le rendez-vous"); go.onclick = function () { if (!sel.value || !dt.value) return toast("Patient et date obligatoires"); wbApi("appt-add", { jid: sel.value, at: new Date(dt.value).getTime(), note: note.value, type: tsel.value }).then(function (r) { if (r && r.ok) { toast("Rendez-vous ajoute"); proTab("appts"); } else toast("Echec : " + ((r && r.error) || "")); }); }; body.appendChild(go);
       const rh = inp("number", P.remind.hours || 24); rh.min = 1; rh.max = 168; const rt = ta(P.remind.text); body.appendChild(el("h4", "", "Message de rappel")); body.appendChild(field("Heures avant le rendez-vous", rh)); body.appendChild(field("Texte ({nom} {date} {heure})", rt));
       const r2 = inp("number", P.remind.hours2 || 0); r2.min = 0; r2.max = 167; body.appendChild(field("2e rappel X heures avant (0 = pas de 2e rappel ; seulement si le patient n'a pas repondu, max 1 de plus)", r2)); const sv = el("button", "btn secondary", "Enregistrer le rappel"); sv.onclick = function () { saveKey("remind", { hours: Number(rh.value), hours2: Number(r2.value), text: rt.value }); }; body.appendChild(sv);
       body.appendChild(el("h4", "", "Journal des reponses (pourquoi une reponse a ete ignoree)")); const lg = el("div", "pro-list"); body.appendChild(lg);
@@ -1991,6 +2019,31 @@
       wbApi("note?jid=" + encodeURIComponent(jid)).then(function (r) { T.value = r.text || ""; meta.textContent = r.at ? "Derniere modification : " + when(r.at) : ""; });
       const sv = el("button", "btn", "Enregistrer la note"); sv.onclick = function () { wbApi("note", { jid: jid, text: T.value }).then(function (r) { toast(r && r.ok ? "Note enregistree" : "Echec"); if (r && r.ok) meta.textContent = r.note.at ? "Derniere modification : " + when(r.note.at) : "Note supprimee"; }); };
       body.appendChild(sv);
+    } else if (t === "types") {
+      body.appendChild(el("p", "pro-note", "Un message de rappel different par type de rendez-vous (ex. consultation, controle, premiere visite). Choisi quand tu ajoutes le rendez-vous ; sans type, le rappel standard est utilise. Variables : {nom} {date} {heure}."));
+      const rows = (P.types || []).map(function (x) { return { id: x.id, name: x.name, text: x.text }; }); const box = el("div");
+      function paint() { box.innerHTML = ""; rows.forEach(function (q, i) { const r = el("div", "pro-row"); const k = inp("text", q.name, "Nom du type"); k.style.maxWidth = "150px"; k.oninput = function () { q.name = k.value; }; const x = ta(q.text, "Message de rappel"); x.oninput = function () { q.text = x.value; }; const d = el("button", "btn secondary", "✕"); d.onclick = function () { rows.splice(i, 1); paint(); }; r.appendChild(k); r.appendChild(x); r.appendChild(d); box.appendChild(r); }); }
+      paint(); body.appendChild(box);
+      const add = el("button", "btn secondary", "+ Ajouter un type"); add.onclick = function () { rows.push({ name: "", text: "Bonjour {nom}, rappel de votre rendez-vous le {date} a {heure}. Repondez OUI pour confirmer ou NON pour annuler." }); paint(); };
+      const sv = el("button", "btn", "Enregistrer"); sv.onclick = function () { saveKey("types", rows); };
+      const bar = el("div", "pro-bar"); bar.appendChild(add); bar.appendChild(sv); body.appendChild(bar);
+    } else if (t === "brand") {
+      const B = P.brand || {};
+      body.appendChild(el("p", "pro-note", "Identite de CE compte : nom du cabinet (rapport, exports), couleur principale de l'application (quand ce compte est actif) et logo (tableau de bord et exports). Le logo reste sur ce PC, il n'est envoye a personne et ne change pas ta photo WhatsApp."));
+      const nm = inp("text", B.name || "", "Nom du cabinet"); body.appendChild(field("Nom du cabinet", nm));
+      const col = inp("color", B.color || "#f2553f"); const reset = el("button", "btn secondary", "Couleur par defaut"); let color = B.color || ""; col.oninput = function () { color = col.value; };
+      reset.onclick = function () { color = ""; col.value = "#f2553f"; }; body.appendChild(field("Couleur principale", col)); body.appendChild(reset);
+      let logo = B.logo || ""; const prev = document.createElement("img"); prev.height = 64; prev.style.cssText = "background:#fff;border-radius:10px;padding:4px;margin-top:8px"; if (logo) prev.src = logo; else prev.style.display = "none"; body.appendChild(prev);
+      const fi = document.createElement("input"); fi.type = "file"; fi.accept = "image/png,image/jpeg,image/webp"; fi.className = "hidden";
+      fi.onchange = function () { const f = fi.files[0]; if (!f) return; const im = new Image(); const u = URL.createObjectURL(f); im.onload = function () { const c = document.createElement("canvas"); const sc = Math.min(1, 256 / Math.max(im.width, im.height)); c.width = Math.round(im.width * sc); c.height = Math.round(im.height * sc); c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); logo = c.toDataURL("image/png"); prev.src = logo; prev.style.display = ""; }; im.onerror = function () { toast("Image illisible"); }; im.src = u; };
+      const pick = el("button", "btn secondary", "Choisir un logo..."); pick.onclick = function () { fi.click(); }; const rm = el("button", "btn secondary", "Retirer le logo"); rm.onclick = function () { logo = ""; prev.style.display = "none"; };
+      const bar0 = el("div", "pro-bar"); bar0.appendChild(pick); bar0.appendChild(rm); body.appendChild(bar0); body.appendChild(fi);
+      const sv = el("button", "btn", "Enregistrer"); sv.onclick = function () { saveKey("brand", { name: nm.value, color: color, logo: logo }, "Identite enregistree"); }; body.appendChild(sv);
+    } else if (t === "import") {
+      body.appendChild(el("p", "pro-note", "Importe une liste de patients depuis un fichier CSV (dans Excel : Enregistrer sous > CSV). Colonnes reconnues par leur titre : nom, telephone (obligatoire), etiquette, rdv (date et heure, ex. 2026-12-03 10:30), motif. Rien n'est envoye aux patients : ca enregistre les noms (localement dans PingChat, pas dans ton telephone), les etiquettes et les rendez-vous a venir. Les numeros marocains 06.. / 07.. sont convertis en +212. PingChat ne verifie PAS que le numero a WhatsApp."));
+      const out = el("div"); const fi = document.createElement("input"); fi.type = "file"; fi.accept = ".csv,text/csv,text/plain"; fi.className = "hidden";
+      fi.onchange = function () { const f = fi.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = function () { csvPreview(String(rd.result), out); }; rd.readAsText(f); };
+      const pick = el("button", "btn", "Choisir un fichier CSV..."); pick.onclick = function () { fi.click(); }; body.appendChild(pick); body.appendChild(fi); body.appendChild(out);
     } else if (t === "lib") {
       body.appendChild(el("p", "pro-note", "Tes documents types (ordonnance type, consignes avant analyse, plan d'acces...). Un clic = envoi a UN patient que tu choisis, jamais en masse. Ne mets pas de document propre a un patient ici. Stockes en clair sur ce PC."));
       const sel = chatSelect(wb.proPre); body.appendChild(field("Envoyer a", sel));
@@ -2011,7 +2064,7 @@
       body.appendChild(go); body.appendChild(out);
     } else if (t === "report") {
       body.appendChild(el("p", "pro-note", "Resume des 7 derniers jours de CE compte, calcule en local. Tu peux le copier ou l'imprimer (rien n'est envoye)."));
-      const nm = inp("text", (P.brand && P.brand.name) || "", "Nom du cabinet"); const svn = el("button", "btn secondary", "Enregistrer le nom"); svn.onclick = function () { saveKey("brand", { name: nm.value }, "Nom enregistre"); };
+      const nm = inp("text", (P.brand && P.brand.name) || "", "Nom du cabinet"); const svn = el("button", "btn secondary", "Enregistrer le nom"); svn.onclick = function () { saveKey("brand", Object.assign({}, P.brand || {}, { name: nm.value }), "Nom enregistre"); };
       body.appendChild(field("Nom du cabinet (en-tete du rapport et des exports)", nm)); body.appendChild(svn);
       const box = el("pre", "pro-note"); box.style.whiteSpace = "pre-wrap"; body.appendChild(box);
       wbApi("dashboard").then(function (d) {
@@ -2107,6 +2160,7 @@
     if (!wb.on) return toast("Le tableau de bord marche avec WhatsApp Web");
     dashSel = wb.accounts.length > 1 ? "all" : (wb.acc || "all");
     $("dash-overlay").classList.remove("hidden"); $("dash-close").onclick = dashClose;
+    (function () { const h = document.querySelector("#dash-overlay .dash-head h2"); let im = $("dash-logo"); const lg = wb.pro && wb.pro.brand && wb.pro.brand.logo; if (!im && lg && h) { im = document.createElement("img"); im.id = "dash-logo"; im.height = 32; im.style.cssText = "background:#fff;border-radius:8px;padding:2px;margin-right:10px;vertical-align:middle"; h.parentNode.insertBefore(im, h); } if (im) { if (lg) { im.src = lg; im.style.display = ""; } else im.style.display = "none"; } })();
     dashLoad(); clearInterval(dashTimer); dashTimer = setInterval(dashLoad, 30000);
   }
   function dashClose() { $("dash-overlay").classList.add("hidden"); clearInterval(dashTimer); }
